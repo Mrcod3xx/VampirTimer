@@ -43,14 +43,15 @@ export function scheduleText(store: Store, guildId: string, limit = 20) {
             : group.includes("2-Star")
               ? "⭐⭐ "
               : "";
+          const cleanGroup = group.replace(/\s*Boss(es)?$/i, "");
           sections.push(
-            `${star}**${escapeMarkdown(group)}**\n${names.map((n) => `• ${n}`).join("\n")}`,
+            `> ${star}**${escapeMarkdown(cleanGroup)}:** ${names.join(", ")}`,
           );
         } else {
-          sections.push(names.map((n) => `• ${n}`).join("\n"));
+          sections.push(`> ${names.join(", ")}`);
         }
       }
-      return `**${formatTime(t)}**\n${sections.join("\n\n")}`;
+      return `⏰ **${formatTime(t)}**\n${sections.join("\n")}`;
     })
     .join("\n\n");
   if (times.length > limit) {

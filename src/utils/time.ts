@@ -41,6 +41,7 @@ export function displayInstant(ms: number) {
 export interface TimedBoss {
   id: number;
   name: string;
+  description?: string;
   enabled: number;
   times: string[];
 }

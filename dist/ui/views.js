@@ -62,18 +62,42 @@ export class Views {
     }
     next(g, u) {
         const next = nextSpawn(this.store.bosses(g), this.now());
-        return this.view("⏳ NEXT BOSS SPAWN", next
-            ? `${next.bosses
-                .slice(0, 20)
-                .map((b) => `• ${escapeMarkdown(b.name)}`)
-                .join("\n")}\n\n**${displayInstant(next.at)}**\nTime remaining: <t:${Math.floor(next.at / 1000)}:R>\nShowing up to 20 simultaneous bosses; use Full Schedule for all. Discord’s relative countdown updates automatically.`
-            : "No active schedules.", [
+        if (!next) {
+            return this.view("⏳ NEXT BOSS SPAWN", "No active schedules.", [
+                row(this.button(g, u, "next", "Refresh"), this.button(g, u, "schedule", "Full Schedule", "0"), this.back(g, u, "main")),
+            ]);
+        }
+        const groups = new Map();
+        for (const b of next.bosses) {
+            const group = b.description?.trim() || "";
+            const gList = groups.get(group) ?? [];
+            gList.push(escapeMarkdown(b.name));
+            groups.set(group, gList);
+        }
+        const sections = [];
+        for (const [group, names] of groups.entries()) {
+            if (group) {
+                const star = group.includes("1-Star")
+                    ? "⭐ "
+                    : group.includes("2-Star")
+                        ? "⭐⭐ "
+                        : "";
+                const cleanGroup = group.replace(/\s*Boss(es)?$/i, "");
+                sections.push(`> ${star}**${escapeMarkdown(cleanGroup)}:** ${names.join(", ")}`);
+            }
+            else {
+                sections.push(`> ${names.join(", ")}`);
+            }
+        }
+        const rawDesc = `**${displayInstant(next.at)}** (<t:${Math.floor(next.at / 1000)}:R>)\n\n${sections.join("\n")}`;
+        const desc = rawDesc.length > 4000 ? `${rawDesc.slice(0, 3950)}…` : rawDesc;
+        return this.view("⏳ NEXT BOSS SPAWN", desc, [
             row(this.button(g, u, "next", "Refresh"), this.button(g, u, "schedule", "Full Schedule", "0"), this.back(g, u, "main")),
         ]);
     }
     schedule(g, u, page = 0, mode = "schedule") {
         const bosses = this.store.bosses(g);
-        const size = 5;
+        const size = 10;
         const pages = Math.max(1, Math.ceil(bosses.length / size));
         page = Math.max(0, Math.min(pages - 1, Number.isFinite(page) ? page : 0));
         const visible = bosses.slice(page * size, (page + 1) * size);
@@ -85,7 +109,7 @@ export class Views {
                 .addOptions(visible.map((b) => ({
                 label: b.name.slice(0, 100),
                 value: String(b.id),
-                description: b.enabled ? "Active" : "Disabled",
+                description: `${b.description || (b.enabled ? "Active" : "Disabled")}`.slice(0, 100),
             })))));
         const nav = [
             this.button(g, u, mode, "Previous", String(page - 1)).setDisabled(page === 0),
@@ -109,6 +133,7 @@ export class Views {
             result.embeds[0].addFields({
                 name: `${b.enabled ? "🟢" : "⏸️"} ${b.name}`,
                 value: `${b.times.map(formatTime).join(" · ")}\n${escapeMarkdown(b.description).slice(0, 400) || "Daily recurrence"}`,
+                inline: true,
             });
         return result;
     }
