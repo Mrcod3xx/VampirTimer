@@ -1,6 +1,7 @@
-import type Database from 'better-sqlite3';
+import type Database from "better-sqlite3";
 
-const migrations = [String.raw`
+const migrations = [
+  String.raw`
 CREATE TABLE guild_settings (
  guild_id TEXT PRIMARY KEY, notification_channel_id TEXT, global_alert_role_id TEXT,
  notifications_enabled INTEGER NOT NULL DEFAULT 1, reminder_30_enabled INTEGER NOT NULL DEFAULT 1,
@@ -46,17 +47,32 @@ CREATE INDEX guild_events ON notification_logs(guild_id,spawn_at);
 CREATE INDEX boss_guild ON bosses(guild_id,id);
 CREATE INDEX subscription_role ON member_subscriptions(guild_id,role_id);
 CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-`];
+`,
+];
 
 export function migrate(db: Database.Database) {
-  db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)');
-  const current = (db.prepare('SELECT COALESCE(MAX(version),0) AS version FROM schema_migrations').get() as { version: number }).version;
-  if (current > migrations.length) throw new Error('Database was created by a newer bot version. Restore matching application code.');
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)",
+  );
+  const current = (
+    db
+      .prepare(
+        "SELECT COALESCE(MAX(version),0) AS version FROM schema_migrations",
+      )
+      .get() as { version: number }
+  ).version;
+  if (current > migrations.length)
+    throw new Error(
+      "Database was created by a newer bot version. Restore matching application code.",
+    );
   migrations.forEach((sql, index) => {
     if (index < current) return;
     db.transaction(() => {
       db.exec(sql);
-      db.prepare('INSERT INTO schema_migrations VALUES (?,?)').run(index + 1, Date.now());
+      db.prepare("INSERT INTO schema_migrations VALUES (?,?)").run(
+        index + 1,
+        Date.now(),
+      );
     })();
   });
 }
