@@ -15,6 +15,7 @@ import { errorCode, log, UserError } from "../utils/logger.js";
 export function scheduleText(store: Store, guildId: string, limit = 20) {
   const bosses = store.bosses(guildId).filter((b) => b.enabled);
   if (!bosses.length) return "No active bosses configured.";
+
   const timeMap = new Map<string, typeof bosses>();
   for (const b of bosses) {
     for (const t of b.times) {
@@ -23,41 +24,91 @@ export function scheduleText(store: Store, guildId: string, limit = 20) {
       timeMap.set(t, list);
     }
   }
+
   const times = [...timeMap.keys()].sort();
   const visibleTimes = times.slice(0, limit);
-  let text = visibleTimes
-    .map((t) => {
-      const list = timeMap.get(t)!;
-      const groups = new Map<string, string[]>();
-      for (const b of list) {
-        const group = b.description.trim() || "";
-        const gList = groups.get(group) ?? [];
-        gList.push(escapeMarkdown(b.name));
-        groups.set(group, gList);
-      }
-      const sections: string[] = [];
-      for (const [group, names] of groups.entries()) {
-        if (group) {
-          const star = group.includes("1-Star")
-            ? "⭐ "
-            : group.includes("2-Star")
-              ? "⭐⭐ "
-              : "";
-          const cleanGroup = group.replace(/\s*Boss(es)?$/i, "");
-          sections.push(
-            `> ${star}**${escapeMarkdown(cleanGroup)}:** ${names.join(", ")}`,
-          );
-        } else {
-          sections.push(`> ${names.join(", ")}`);
-        }
-      }
-      return `⏰ **${formatTime(t)}**\n${sections.join("\n")}`;
-    })
-    .join("\n\n");
-  if (times.length > limit) {
-    text += `\n\n… and more. Use /boss schedule.`;
+  const divider = "\n───────────────────────────────────────────\n";
+
+  const timeRows = visibleTimes.map((t) => {
+    const bList = timeMap.get(t)!;
+    const has1 = bList.some((b) => b.description.includes("1-Star"));
+    const has2 = bList.some((b) => b.description.includes("2-Star"));
+    let tier = "";
+    if (has1 && has2) tier = "⭐ 1-Star + ⭐⭐ 2-Star";
+    else if (has1) tier = "⭐ 1-Star";
+    else if (has2) tier = "⭐⭐ 2-Star";
+    else tier = bList.map((b) => escapeMarkdown(b.name)).join(", ");
+    return `**${formatTime(t)}** \u2003\u2003\u2003\u2003${tier}`;
+  });
+
+  const oneStar = bosses.filter((b) => b.description.includes("1-Star"));
+  const twoStar = bosses.filter((b) => b.description.includes("2-Star"));
+  const others = bosses.filter(
+    (b) => !b.description.includes("1-Star") && !b.description.includes("2-Star"),
+  );
+
+  const sections: string[] = [
+    "*Daily Spawns • Philippine Time (UTC+8)*\n",
+    "⏰ **Spawn Schedule**\n",
+    timeRows.join(divider),
+    divider,
+    "",
+  ];
+
+  if (oneStar.length > 0) {
+    sections.push(`⭐ **1-Star Bosses (${oneStar.length})**`);
+    const lv56 = oneStar
+      .filter((b) => b.name.includes("56"))
+      .map((b) => b.name.replace(/^Lv\.\s*\d+\s*/i, ""));
+    const lv60 = oneStar
+      .filter((b) => b.name.includes("60"))
+      .map((b) => b.name.replace(/^Lv\.\s*\d+\s*/i, ""));
+    const rest = oneStar
+      .filter((b) => !b.name.includes("56") && !b.name.includes("60"))
+      .map((b) => escapeMarkdown(b.name));
+
+    if (lv56.length > 0)
+      sections.push(
+        `**Lv. 56:** ${lv56.map((x) => escapeMarkdown(x)).join(" • ")}`,
+      );
+    if (lv60.length > 0)
+      sections.push(
+        `**Lv. 60:** ${lv60.map((x) => escapeMarkdown(x)).join(" • ")}`,
+      );
+    if (rest.length > 0) sections.push(rest.join(" • "));
+    sections.push("");
   }
-  return text;
+
+  if (twoStar.length > 0) {
+    sections.push(`⭐⭐ **2-Star Bosses (${twoStar.length})**`);
+    const beasts = twoStar
+      .filter((b) => b.name.toLowerCase().includes("guardian beast"))
+      .map((b) => b.name.replace(/^Lv\.\s*\d+\s*Guardian\s*Beast\s*/i, ""));
+    const rest = twoStar
+      .filter((b) => !b.name.toLowerCase().includes("guardian beast"))
+      .map((b) => escapeMarkdown(b.name));
+
+    if (beasts.length > 0) {
+      sections.push("**Lv. 62 Guardian Beasts:**");
+      sections.push(beasts.map((x) => escapeMarkdown(x)).join(" • "));
+    }
+    if (rest.length > 0) sections.push(rest.join(" • "));
+  }
+
+  if (others.length > 0) {
+    sections.push("");
+    sections.push(`**Other Bosses (${others.length})**`);
+    sections.push(others.map((b) => escapeMarkdown(b.name)).join(" • "));
+  }
+
+  sections.push(divider);
+  sections.push("All spawn times are in Philippine Time.");
+
+  if (times.length > limit) {
+    sections.push("\n… and more. Use View Bosses.");
+  }
+
+  return sections.join("\n");
 }
 export class Notifications implements Delivery {
   constructor(

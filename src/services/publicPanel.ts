@@ -31,31 +31,40 @@ export class PublicPanel {
     const payload = {
       embeds: [
         new EmbedBuilder()
-          .setTitle("👹 GEHENNA BOSS TRACKER")
-          .setDescription(
-            `**Daily Spawn Schedule**\n\n${scheduleText(store, guildId)}`,
-          )
-          .setColor(0x5865f2)
-          .setFooter({ text: zoneLabel }),
+          .setTitle("👿 GEHENNA BOSS TRACKER")
+          .setDescription(scheduleText(store, guildId))
+          .setColor(0x5865f2),
       ],
       components: [
         row(
-          ...(["next", "schedule", "alerts", "refresh"] as const).map((a, i) =>
-            new ButtonBuilder()
-              .setCustomId(
-                this.views.components.id(
-                  guildId,
-                  "0",
-                  a,
-                  a === "schedule" ? "0" : "",
-                  true,
-                ),
-              )
-              .setLabel(
-                ["Next Boss", "Full Schedule", "My Alerts", "Refresh"][i]!,
-              )
-              .setStyle(ButtonStyle.Secondary),
-          ),
+          new ButtonBuilder()
+            .setCustomId(
+              this.views.components.id(guildId, "0", "next", "", true),
+            )
+            .setLabel("Next Spawn")
+            .setEmoji("⏱")
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId(
+              this.views.components.id(guildId, "0", "schedule", "0", true),
+            )
+            .setLabel("View Bosses")
+            .setEmoji("📑")
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId(
+              this.views.components.id(guildId, "0", "alerts", "", true),
+            )
+            .setLabel("My Alerts")
+            .setEmoji("🔔")
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId(
+              this.views.components.id(guildId, "0", "refresh", "", true),
+            )
+            .setLabel("Refresh")
+            .setEmoji("🔄")
+            .setStyle(ButtonStyle.Secondary),
         ),
       ],
       allowedMentions: { parse: [] as [] },
