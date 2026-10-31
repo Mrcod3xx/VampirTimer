@@ -35,7 +35,7 @@ describe("Philippine time", () => {
     expect(next.at).toBe(
       DateTime.fromISO("2026-11-01T14:00:00+08:00").toMillis(),
     );
-    expect(next.bosses).toHaveLength(2);
+    expect(next.bosses).toHaveLength(9);
   });
 });
 describe("SQLite boss management", () => {
@@ -44,7 +44,7 @@ describe("SQLite boss management", () => {
     const id = s.bosses("a")[0]!.id;
     s.removeBoss("a", id);
     s.initGuild("a");
-    expect(s.bosses("a")).toHaveLength(1);
+    expect(s.bosses("a")).toHaveLength(8);
   });
   it("creates, edits stable ID, isolates guilds, rejects duplicates and deletes", () => {
     const s = store();
@@ -72,8 +72,8 @@ describe("SQLite boss management", () => {
       ),
     ).toMatchObject({ id: b.id, enabled: 0, times: ["02:00"] });
     s.removeBoss("a", b.id);
-    expect(s.bosses("a")).toHaveLength(2);
-    expect(s.bosses("b")).toHaveLength(2);
+    expect(s.bosses("a")).toHaveLength(9);
+    expect(s.bosses("b")).toHaveLength(9);
   });
   it("validates settings, and migrations do not repeat", () => {
     const s = store();

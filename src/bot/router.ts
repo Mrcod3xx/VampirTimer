@@ -406,6 +406,7 @@ export class Router {
           break;
         }
         case "refresh":
+          this.store.initGuild(g);
           await this.publicPanel.refresh(g);
           await respond(this.views.schedule(g, u, 0));
           break;

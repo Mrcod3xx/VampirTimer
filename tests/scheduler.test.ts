@@ -39,7 +39,7 @@ it("groups simultaneous reminders and prevents repeat sends across ticks/restart
   const t = setup();
   await t.scheduler.tick();
   expect(t.sent).toHaveLength(1);
-  expect(t.sent[0]).toHaveLength(2);
+  expect(t.sent[0]).toHaveLength(9);
   await t.scheduler.tick();
   t.scheduler.recover();
   await t.scheduler.tick();
@@ -64,7 +64,7 @@ it("expires offline events and resumes a recent event", async () => {
         "SELECT * FROM notification_logs WHERE status='missed' AND minutes=10",
       )
       .all(),
-  ).toHaveLength(2);
+  ).toHaveLength(9);
 });
 it("handles reminders crossing midnight", async () => {
   const t = setup("2026-10-31T23:40:00");
@@ -112,7 +112,7 @@ it("never resends a crash-ambiguous claim", async () => {
     t.s.db
       .prepare("SELECT * FROM notification_logs WHERE status='uncertain'")
       .all(),
-  ).toHaveLength(2);
+  ).toHaveLength(9);
 });
 it("retries safe failures with backoff but not ambiguous network sends", async () => {
   const t = setup();
@@ -126,7 +126,7 @@ it("retries safe failures with backoff but not ambiguous network sends", async (
         "SELECT * FROM notification_logs WHERE attempts=1 AND status='pending'",
       )
       .all(),
-  ).toHaveLength(2);
+  ).toHaveLength(9);
   t.set("2026-10-31T13:30:11");
   t.delivery.prepare = async () => t.s.settings("a").notification_channel_id!;
   t.delivery.send = async () => {
@@ -137,7 +137,7 @@ it("retries safe failures with backoff but not ambiguous network sends", async (
     t.s.db
       .prepare("SELECT * FROM notification_logs WHERE status='uncertain'")
       .all(),
-  ).toHaveLength(2);
+  ).toHaveLength(9);
 });
 it("rechecks lateness and channel after asynchronous preparation", async () => {
   const t = setup();

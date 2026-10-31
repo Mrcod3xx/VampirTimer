@@ -28,7 +28,7 @@ it("persists settings, roles, subscriptions and schema across reopen", () => {
   store.close();
   store = new Store(join(dir, "live.db"));
   store.initGuild("a");
-  expect(store.bosses("a")).toHaveLength(2);
+  expect(store.bosses("a")).toHaveLength(9);
   expect(store.settings("a").notification_channel_id).toBe(
     "123456789012345678",
   );
@@ -46,7 +46,7 @@ it("creates verified WAL-safe snapshots, keeps three, and restores them", async 
   store.close();
   await restore(first, join(dir, "live.db"));
   store = new Store(join(dir, "live.db"));
-  expect(store.bosses("a")).toHaveLength(2);
+  expect(store.bosses("a")).toHaveLength(9);
   for (let i = 0; i < 4; i++) await backup(store);
   expect(
     readdirSync(join(dir, "backups")).filter((n) => n.endsWith(".db")),

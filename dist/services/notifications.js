@@ -13,14 +13,38 @@ export function scheduleText(store, guildId, limit = 20) {
     for (const b of bosses) {
         for (const t of b.times) {
             const list = timeMap.get(t) ?? [];
-            list.push(escapeMarkdown(b.name));
+            list.push(b);
             timeMap.set(t, list);
         }
     }
     const times = [...timeMap.keys()].sort();
     const visibleTimes = times.slice(0, limit);
     let text = visibleTimes
-        .map((t) => `**${formatTime(t)}**\n${timeMap.get(t).map((n) => `- ${n}`).join("\n")}`)
+        .map((t) => {
+        const list = timeMap.get(t);
+        const groups = new Map();
+        for (const b of list) {
+            const group = b.description.trim() || "";
+            const gList = groups.get(group) ?? [];
+            gList.push(escapeMarkdown(b.name));
+            groups.set(group, gList);
+        }
+        const sections = [];
+        for (const [group, names] of groups.entries()) {
+            if (group) {
+                const star = group.includes("1-Star")
+                    ? "⭐ "
+                    : group.includes("2-Star")
+                        ? "⭐⭐ "
+                        : "";
+                sections.push(`${star}**${escapeMarkdown(group)}**\n${names.map((n) => `• ${n}`).join("\n")}`);
+            }
+            else {
+                sections.push(names.map((n) => `• ${n}`).join("\n"));
+            }
+        }
+        return `**${formatTime(t)}**\n${sections.join("\n\n")}`;
+    })
         .join("\n\n");
     if (times.length > limit) {
         text += `\n\n… and more. Use /boss schedule.`;

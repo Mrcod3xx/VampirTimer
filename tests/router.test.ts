@@ -159,7 +159,7 @@ it("enforces administrator permission for every mutation, including forged visib
     expect(i.reply.mock.calls[0]![0].content).toContain("administrators");
     expect(i.reply.mock.calls[0]![0].flags).toBe(MessageFlags.Ephemeral);
   }
-  expect(t.store.bosses(G)).toHaveLength(2);
+  expect(t.store.bosses(G)).toHaveLength(9);
   expect(t.channel.send).not.toHaveBeenCalled();
 });
 it("handles role/channel selectors, reminders, subscriptions, test and publication", async () => {

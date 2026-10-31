@@ -50,10 +50,12 @@ async function main() {
   };
   process.once("SIGINT", () => void shutdown());
   process.once("SIGTERM", () => void shutdown());
-  client.once(Events.ClientReady, () => {
+  client.once(Events.ClientReady, async () => {
     try {
-      for (const guild of client.guilds.cache.values())
+      for (const guild of client.guilds.cache.values()) {
         store.initGuild(guild.id);
+        await router.publicPanel.refresh(guild.id).catch(() => {});
+      }
       scheduler.start();
       log("info", "Boss tracker ready", {
         guilds: client.guilds.cache.size,
@@ -68,6 +70,7 @@ async function main() {
   client.on(Events.GuildCreate, (guild) => {
     try {
       store.initGuild(guild.id);
+      void router.publicPanel.refresh(guild.id).catch(() => {});
     } catch (error) {
       log("error", "Guild initialization failed", { code: errorCode(error) });
     }

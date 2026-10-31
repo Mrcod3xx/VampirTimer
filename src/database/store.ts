@@ -6,6 +6,26 @@ import { migrate } from "./migrations.js";
 import { parseTimes } from "../utils/time.js";
 import { UserError } from "../utils/logger.js";
 
+export const DEFAULT_BOSSES: Array<{
+  name: string;
+  description: string;
+  times: string;
+  enabled: boolean;
+}> = [
+  // 1-Star Bosses (Spawn at 2:00 PM, 6:00 PM, 10:00 PM Philippine Time)
+  { name: "Lv. 56 Mildis", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
+  { name: "Lv. 56 Regan", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
+  { name: "Lv. 56 Avok", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
+  { name: "Lv. 60 Eligo", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
+  { name: "Lv. 60 Lussem", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
+  { name: "Lv. 60 Arto", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
+
+  // 2-Star Bosses (Spawn at 2:00 PM, 10:00 PM Philippine Time)
+  { name: "Lv. 62 Guardian Beast Gazoth", description: "2-Star Boss", times: "14:00,22:00", enabled: true },
+  { name: "Lv. 62 Guardian Beast K'Valkan", description: "2-Star Boss", times: "14:00,22:00", enabled: true },
+  { name: "Lv. 62 Guardian Beast Beherd", description: "2-Star Boss", times: "14:00,22:00", enabled: true },
+];
+
 export interface Settings {
   guild_id: string;
   notification_channel_id: string | null;
@@ -133,24 +153,39 @@ export class Store {
           "INSERT OR IGNORE INTO guild_settings(guild_id,created_at,updated_at) VALUES (?,?,?)",
         )
         .run(guildId, now, now);
+
+      // Auto-migrate legacy generic boss entries to individual bosses
+      const legacyBosses = this.db
+        .prepare(
+          "SELECT id FROM bosses WHERE guild_id=? AND name IN ('1-Star Gehenna Boss', '2-Star Gehenna Boss')",
+        )
+        .all(guildId) as { id: number }[];
+
+      if (legacyBosses.length > 0) {
+        for (const lb of legacyBosses) {
+          this.db.prepare("DELETE FROM bosses WHERE id=?").run(lb.id);
+        }
+        for (const b of DEFAULT_BOSSES) {
+          this.saveBoss(guildId, b);
+        }
+        this.db
+          .prepare(
+            "UPDATE guild_settings SET defaults_initialized=1 WHERE guild_id=?",
+          )
+          .run(guildId);
+        return;
+      }
+
       const row = this.db
         .prepare(
           "SELECT defaults_initialized FROM guild_settings WHERE guild_id=?",
         )
         .get(guildId) as { defaults_initialized: number };
       if (row.defaults_initialized) return;
-      this.saveBoss(guildId, {
-        name: "1-Star Gehenna Boss",
-        description: "Lv. 56 Mildis · Lv. 56 Regan · Lv. 56 Avok · Lv. 60 Eligo · Lv. 60 Lussem · Lv. 60 Arto",
-        enabled: true,
-        times: "14:00,18:00,22:00",
-      });
-      this.saveBoss(guildId, {
-        name: "2-Star Gehenna Boss",
-        description: "Lv. 62 Guardian Beast Gazoth · Lv. 62 Guardian Beast K'Valkan · Lv. 62 Guardian Beast Beherd",
-        enabled: true,
-        times: "14:00,22:00",
-      });
+
+      for (const b of DEFAULT_BOSSES) {
+        this.saveBoss(guildId, b);
+      }
       this.db
         .prepare(
           "UPDATE guild_settings SET defaults_initialized=1 WHERE guild_id=?",
