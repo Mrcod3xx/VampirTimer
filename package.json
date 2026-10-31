@@ -1,0 +1,36 @@
+{
+  "name": "discord-boss-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Philippine-time boss schedules and opt-in Discord alerts",
+  "engines": { "node": ">=22.12.0 <25" },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --max-old-space-size=256 dist/index.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run --maxWorkers=1",
+    "register": "node dist/register.js",
+    "backup": "node dist/maintenance.js backup",
+    "inspect": "node dist/maintenance.js inspect",
+    "storage-check": "node dist/maintenance.js check",
+    "restore": "node dist/maintenance.js restore",
+    "package": "node scripts/package.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "discord.js": "^14.25.1",
+    "dotenv": "^17.2.3",
+    "luxon": "^3.7.2",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/luxon": "^3.7.1",
+    "@types/node": "^24.10.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.4"
+  }
+}
