@@ -44,12 +44,15 @@ async function main() {
                 await router.publicPanel.refresh(guild.id).catch(() => { });
             }
             scheduler.start();
-            // Auto-sync slash commands so newly added commands appear immediately
+            // Sync slash commands cleanly without duplicating across global and guild scopes
             try {
                 if (config.DISCORD_GUILD_ID) {
                     const guild = client.guilds.cache.get(config.DISCORD_GUILD_ID);
                     if (guild) {
                         await guild.commands.set(commands);
+                        if (client.application) {
+                            await client.application.commands.set([]).catch(() => { });
+                        }
                         log("info", "Synced slash commands to target guild", {
                             guild: config.DISCORD_GUILD_ID,
                             count: commands.length,
@@ -57,26 +60,20 @@ async function main() {
                     }
                 }
                 else {
-                    // Sync directly to all joined guilds so commands appear INSTANTLY without the 1-hour global Discord cache delay
+                    // Remove any leftover guild-scoped commands so Discord never shows duplicate entries
                     for (const guild of client.guilds.cache.values()) {
-                        await guild.commands.set(commands).catch((err) => {
-                            log("warn", "Guild command sync failed", {
-                                guild: guild.id,
-                                code: errorCode(err),
-                            });
-                        });
-                        log("info", "Synced slash commands to guild", {
-                            guild: guild.id,
-                            count: commands.length,
-                        });
+                        await guild.commands.set([]).catch(() => { });
                     }
                     if (client.application) {
-                        await client.application.commands.set(commands).catch(() => { });
+                        await client.application.commands.set(commands);
+                        log("info", "Synced slash commands globally", {
+                            count: commands.length,
+                        });
                     }
                 }
             }
             catch (err) {
-                log("warn", "Automatic slash command sync failed; run 'npm run register' if commands are missing", { code: errorCode(err) });
+                log("warn", "Slash command sync failed", { code: errorCode(err) });
             }
             log("info", "Boss tracker ready", {
                 guilds: client.guilds.cache.size,
@@ -92,7 +89,7 @@ async function main() {
     client.on(Events.GuildCreate, (guild) => {
         try {
             store.initGuild(guild.id);
-            void guild.commands.set(commands).catch(() => { });
+            void guild.commands.set([]).catch(() => { });
             void router.publicPanel.refresh(guild.id).catch(() => { });
         }
         catch (error) {
