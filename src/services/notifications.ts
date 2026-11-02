@@ -9,10 +9,24 @@ import { createHash } from "node:crypto";
 import { DateTime } from "luxon";
 import { Store, type Event } from "../database/store.js";
 import { SafeRetry, type Delivery } from "./scheduler.js";
-import { formatTime, ZONE, zoneLabel } from "../utils/time.js";
+import {
+  ZONE,
+  formatPhilippineTime,
+  formatTime,
+  getNextOccurrence,
+  groupBossesByTierAndLevel,
+  toUnixSeconds,
+  zoneLabel,
+} from "../utils/time.js";
 import { validateChannel } from "../utils/permissions.js";
 import { errorCode, log, UserError } from "../utils/logger.js";
-export function scheduleText(store: Store, guildId: string, limit = 20) {
+
+export function scheduleText(
+  store: Store,
+  guildId: string,
+  limit = 20,
+  nowMs = Date.now(),
+) {
   const bosses = store.bosses(guildId).filter((b) => b.enabled);
   if (!bosses.length) return "No active bosses configured.";
 
@@ -27,82 +41,72 @@ export function scheduleText(store: Store, guildId: string, limit = 20) {
 
   const times = [...timeMap.keys()].sort();
   const visibleTimes = times.slice(0, limit);
-  const divider = "\n───────────────────────────────────────────\n";
 
   const timeRows = visibleTimes.map((t) => {
     const bList = timeMap.get(t)!;
-    const has1 = bList.some((b) => b.description.includes("1-Star"));
-    const has2 = bList.some((b) => b.description.includes("2-Star"));
+    const has1 = bList.some((b) => (b.description ?? "").includes("1-Star"));
+    const has2 = bList.some((b) => (b.description ?? "").includes("2-Star"));
     let tier = "";
     if (has1 && has2) tier = "⭐ 1-Star + ⭐⭐ 2-Star";
     else if (has1) tier = "⭐ 1-Star";
     else if (has2) tier = "⭐⭐ 2-Star";
     else tier = bList.map((b) => escapeMarkdown(b.name)).join(", ");
-    return `**${formatTime(t)}** \u2003\u2003\u2003\u2003${tier}`;
+
+    const nextAt = getNextOccurrence(t, nowMs);
+    const sec = toUnixSeconds(nextAt);
+    return `**${formatTime(t)} PHT**\n• ${tier}\n• Your Time: <t:${sec}:t> (<t:${sec}:R>)`;
   });
 
-  const oneStar = bosses.filter((b) => b.description.includes("1-Star"));
-  const twoStar = bosses.filter((b) => b.description.includes("2-Star"));
-  const others = bosses.filter(
-    (b) => !b.description.includes("1-Star") && !b.description.includes("2-Star"),
-  );
+  const { oneStar, twoStar, other } = groupBossesByTierAndLevel(bosses);
 
   const sections: string[] = [
     "*Daily Spawns • Philippine Time (UTC+8)*\n",
     "⏰ **Spawn Schedule**\n",
-    timeRows.join(divider),
-    divider,
-    "",
+    timeRows.join("\n\n"),
+    "\n───────────────────────────────────────────\n",
   ];
 
-  if (oneStar.length > 0) {
-    sections.push(`⭐ **1-Star Bosses (${oneStar.length})**`);
-    const lv56 = oneStar
-      .filter((b) => b.name.includes("56"))
-      .map((b) => b.name.replace(/^Lv\.\s*\d+\s*/i, ""));
-    const lv60 = oneStar
-      .filter((b) => b.name.includes("60"))
-      .map((b) => b.name.replace(/^Lv\.\s*\d+\s*/i, ""));
-    const rest = oneStar
-      .filter((b) => !b.name.includes("56") && !b.name.includes("60"))
-      .map((b) => escapeMarkdown(b.name));
-
-    if (lv56.length > 0)
+  if (oneStar.count > 0) {
+    sections.push(`⭐ **1-Star Bosses (${oneStar.count})**`);
+    for (const g of oneStar.groups) {
       sections.push(
-        `**Lv. 56:** ${lv56.map((x) => escapeMarkdown(x)).join(" • ")}`,
+        `**${g.group}** ${g.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
       );
-    if (lv60.length > 0)
-      sections.push(
-        `**Lv. 60:** ${lv60.map((x) => escapeMarkdown(x)).join(" • ")}`,
-      );
-    if (rest.length > 0) sections.push(rest.join(" • "));
-    sections.push("");
-  }
-
-  if (twoStar.length > 0) {
-    sections.push(`⭐⭐ **2-Star Bosses (${twoStar.length})**`);
-    const beasts = twoStar
-      .filter((b) => b.name.toLowerCase().includes("guardian beast"))
-      .map((b) => b.name.replace(/^Lv\.\s*\d+\s*Guardian\s*Beast\s*/i, ""));
-    const rest = twoStar
-      .filter((b) => !b.name.toLowerCase().includes("guardian beast"))
-      .map((b) => escapeMarkdown(b.name));
-
-    if (beasts.length > 0) {
-      sections.push("**Lv. 62 Guardian Beasts:**");
-      sections.push(beasts.map((x) => escapeMarkdown(x)).join(" • "));
     }
-    if (rest.length > 0) sections.push(rest.join(" • "));
-  }
-
-  if (others.length > 0) {
     sections.push("");
-    sections.push(`**Other Bosses (${others.length})**`);
-    sections.push(others.map((b) => escapeMarkdown(b.name)).join(" • "));
   }
 
-  sections.push(divider);
-  sections.push("All spawn times are in Philippine Time.");
+  if (twoStar.count > 0) {
+    sections.push(`⭐⭐ **2-Star Bosses (${twoStar.count})**`);
+    for (const g of twoStar.groups) {
+      if (g.group.includes("Guardian Beasts")) {
+        sections.push(
+          `**${g.group}**\n${g.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+        );
+      } else {
+        sections.push(
+          `**${g.group}** ${g.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+        );
+      }
+    }
+    sections.push("");
+  }
+
+  if (other.count > 0) {
+    sections.push(`**Other Bosses (${other.count})**`);
+    for (const g of other.groups) {
+      sections.push(
+        `**${g.group}** ${g.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+      );
+    }
+    sections.push("");
+  }
+
+  sections.push("───────────────────────────────────────────");
+  sections.push(
+    `**${bosses.length} Bosses • ${times.length} Daily Spawn Times**`,
+  );
+  sections.push("All spawn times are based on Philippine Time (UTC+8).");
 
   if (times.length > limit) {
     sections.push("\n… and more. Use View Bosses.");
@@ -184,32 +188,87 @@ export class Notifications implements Delivery {
       )
         roles.delete(id);
     }
-    const spawnTimeFormatted = DateTime.fromMillis(first.spawn_at, {
+    const spawnSec = toUnixSeconds(first.spawn_at);
+    const phtFormatted = `${DateTime.fromMillis(first.spawn_at, {
       zone: ZONE,
       locale: "en",
-    }).toFormat("h:mm a");
+    }).toFormat("h:mm a")} PHT`;
 
     let title: string;
     let description: string;
+    let color = 0x8b5cf6;
+
     if (daily) {
       title = "👹 TODAY’S BOSS SCHEDULE";
       description = scheduleText(this.store, first.guild_id);
-    } else if (first.minutes === 30) {
-      title = "⏰ BOSS SPAWN WARNING";
-      description = `The following bosses spawn in 30 minutes:\n\n${names.map((n) => `- ${n}`).join("\n")}\n\nSpawn Time: **${spawnTimeFormatted}**\nTimezone: Philippine Time (UTC+8)\n\nPrepare your party!`;
-    } else if (first.minutes === 10) {
-      title = "⚠️ BOSS SPAWN IN 10 MINUTES!";
-      description = `Upcoming Bosses:\n\n${names.map((n) => `- ${n}`).join("\n")}\n\nSpawn Time: **${spawnTimeFormatted}**\n\nGet ready!`;
-    } else if (first.minutes === 0) {
-      title = "🔥 BOSS SPAWN TIME!";
-      description = `The following bosses are scheduled to spawn NOW!\n\n${names.map((n) => `- ${n}`).join("\n")}\n\nSpawn Time: **${spawnTimeFormatted}**\nTimezone: Philippine Time (UTC+8)\n\nGood luck, everyone!`;
+      color = 0x8b5cf6;
     } else {
-      title = `⏰ BOSS SPAWN IN ${first.minutes} MINUTES!`;
-      description = `Upcoming Bosses:\n\n${names.map((n) => `- ${n}`).join("\n")}\n\nSpawn Time: **${spawnTimeFormatted}**\nTimezone: Philippine Time (UTC+8)\n\nPrepare your party!`;
+      const activeBosses = events
+        .map((e) => this.store.boss(first.guild_id, e.boss_id))
+        .filter(Boolean);
+      const { oneStar, twoStar, other } =
+        groupBossesByTierAndLevel(activeBosses);
+      const bossSections: string[] = [];
+
+      if (oneStar.count > 0) {
+        bossSections.push(`⭐ **1-Star Bosses (${oneStar.count})**`);
+        for (const g of oneStar.groups) {
+          bossSections.push(
+            `**${g.group}** ${g.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+          );
+        }
+        bossSections.push("");
+      }
+
+      if (twoStar.count > 0) {
+        bossSections.push(`⭐⭐ **2-Star Bosses (${twoStar.count})**`);
+        for (const g of twoStar.groups) {
+          if (g.group.includes("Guardian Beasts")) {
+            bossSections.push(
+              `**${g.group}**\n${g.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+            );
+          } else {
+            bossSections.push(
+              `**${g.group}** ${g.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+            );
+          }
+        }
+        bossSections.push("");
+      }
+
+      if (other.count > 0) {
+        bossSections.push(`**Other Bosses (${other.count})**`);
+        for (const g of other.groups) {
+          bossSections.push(
+            `**${g.group}** ${g.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+          );
+        }
+        bossSections.push("");
+      }
+
+      const bossListText = bossSections.join("\n").trim();
+
+      if (first.minutes === 30) {
+        title = "⏰ BOSS SPAWN IN 30 MINUTES";
+        color = 0xeab308;
+        description = `**Scheduled Spawn:** ${phtFormatted}\n**Your Local Time:** <t:${spawnSec}:t>\n**Starts:** <t:${spawnSec}:R>\n\n${bossListText}\n\n⚔️ **Prepare your party!**`;
+      } else if (first.minutes === 10) {
+        title = "⚠️ BOSS SPAWN IN 10 MINUTES!";
+        color = 0xf59e0b;
+        description = `**Scheduled Spawn:** ${phtFormatted}\n**Your Local Time:** <t:${spawnSec}:t>\n**Starts:** <t:${spawnSec}:R>\n\n${bossListText}\n\n⚔️ **Get ready!**`;
+      } else if (first.minutes === 0) {
+        title = "🔥 GEHENNA BOSSES HAVE SPAWNED!";
+        color = 0xf97316;
+        description = `**Scheduled Spawn:** ${phtFormatted}\n**Your Local Time:** <t:${spawnSec}:t>\n\n${bossListText}\n\n⚔️ **Good luck, everyone!**`;
+      } else {
+        title = `⏰ BOSS SPAWN IN ${first.minutes} MINUTES!`;
+        color = 0xf59e0b;
+        description = `**Scheduled Spawn:** ${phtFormatted}\n**Your Local Time:** <t:${spawnSec}:t>\n**Starts:** <t:${spawnSec}:R>\n\n${bossListText}\n\n⚔️ **Prepare your party!**`;
+      }
     }
 
     const embed = new EmbedBuilder()
-      .setColor(daily ? 0x5865f2 : first.minutes === 0 ? 0xe66b38 : 0xf0b843)
+      .setColor(color)
       .setTitle(title)
       .setDescription(description)
       .setFooter({ text: zoneLabel })

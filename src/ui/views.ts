@@ -13,12 +13,18 @@ import {
   escapeMarkdown,
   type MessageActionRowComponentBuilder,
 } from "discord.js";
+import { DateTime } from "luxon";
 import { Store, settingToggles, type Boss } from "../database/store.js";
 import { Components } from "./components.js";
 import {
+  ZONE,
   displayInstant,
+  formatPhilippineTime,
   formatTime,
+  getNextOccurrence,
+  groupBossesByTierAndLevel,
   nextSpawn,
+  toUnixSeconds,
   zoneLabel,
 } from "../utils/time.js";
 export const row = (...components: MessageActionRowComponentBuilder[]) =>
@@ -65,13 +71,14 @@ export class Views {
     title: string,
     description: string,
     rows: View["components"] = [],
+    color = 0x5865f2,
   ): View {
     return {
       embeds: [
         new EmbedBuilder()
           .setTitle(title)
           .setDescription(description)
-          .setColor(0x5865f2)
+          .setColor(color)
           .setFooter({ text: zoneLabel }),
       ],
       components: rows,
@@ -85,9 +92,15 @@ export class Views {
     const s = this.store.settings(g);
     const bosses = this.store.bosses(g);
     const next = nextSpawn(bosses, this.now());
+    let nextSpawnText = "None";
+    if (next) {
+      const sec = toUnixSeconds(next.at);
+      const pht = `${DateTime.fromMillis(next.at, { zone: ZONE }).toFormat("h:mm a")} PHT`;
+      nextSpawnText = `${pht} (<t:${sec}:R>)`;
+    }
     return this.view(
       "👹 GEHENNA BOSS TRACKER",
-      `**Bosses:** ${bosses.length}\n**Notification channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "Not configured — ask an administrator"}\n**Notifications:** ${s.notifications_enabled ? "Enabled" : "Disabled"}\n**Next spawn:** ${next ? displayInstant(next.at) : "None"}`,
+      `**Bosses Tracked:** ${bosses.length}\n**Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "Not configured"}\n**Notifications:** ${s.notifications_enabled ? "🟢 Enabled" : "🔴 Disabled"}\n**Next Spawn:** ${nextSpawnText}`,
       [
         row(
           this.button(g, u, "schedule", "View Bosses", "0"),
@@ -96,30 +109,59 @@ export class Views {
           this.button(g, u, "admin", "Admin Settings"),
         ),
       ],
+      0x8b5cf6,
     );
   }
   admin(g: string, u: string) {
+    const s = this.store.settings(g);
+    const bosses = this.store.bosses(g);
+    const desc = [
+      "Manage boss schedules and notifications\n",
+      `**Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "Not configured"}`,
+      `**Bosses Tracked:** ${bosses.length}`,
+      `**Notifications:** ${s.notifications_enabled ? "🟢 Enabled" : "🔴 Disabled"}`,
+      `**Timezone:** Philippine Time (UTC+8)`,
+    ].join("\n");
+
     return this.view(
-      "⚙️ BOSS TRACKER ADMIN PANEL",
-      "Configure schedules and notifications. Changes save immediately.",
+      "⚙️ BOSS TRACKER CONTROL PANEL",
+      desc,
       [
         row(
-          this.button(g, u, "add", "Add Boss"),
-          this.button(g, u, "manage", "Manage Bosses", "0"),
-          this.button(g, u, "channels", "Set Notification Channel"),
+          this.button(g, u, "add", "➕ Add Boss"),
+          this.button(g, u, "manage", "📋 Manage", "0"),
+          this.button(g, u, "schedule", "⏰ Schedule", "0"),
         ),
         row(
-          this.button(g, u, "settings", "Notification Settings"),
-          this.button(g, u, "roles", "Role Settings"),
-          this.button(g, u, "test", "Test Notification"),
+          this.button(g, u, "channels", "# Set Channel"),
+          this.button(g, u, "settings", "🔔 Alerts"),
+          this.button(g, u, "roles", "🏷️ Roles"),
         ),
         row(
-          this.button(g, u, "publish", "Publish Schedule"),
-          this.button(g, u, "status", "Delivery Status"),
-          this.button(g, u, "resetPanel", "Reset Public Panel"),
-          this.back(g, u, "main"),
+          this.button(g, u, "test", "🧪 Test"),
+          this.button(g, u, "status", "📊 Status"),
+          this.button(g, u, "more", "⚙️ More"),
         ),
       ],
+      0x5865f2,
+    );
+  }
+  more(g: string, u: string) {
+    return this.view(
+      "⚙️ ADVANCED ADMIN TOOLS",
+      "Additional management controls for the boss tracker.",
+      [
+        row(
+          this.button(g, u, "publish", "📢 Publish Schedule"),
+          this.button(g, u, "resetPanel", "🔄 Reset Public Panel"),
+          this.button(g, u, "intervals", "⏰ Reminder Intervals"),
+        ),
+        row(
+          this.button(g, u, "backup", "💾 Backup Database"),
+          this.back(g, u, "admin"),
+        ),
+      ],
+      0x5865f2,
     );
   }
   next(g: string, u: string) {
@@ -135,43 +177,123 @@ export class Views {
             this.back(g, u, "main"),
           ),
         ],
+        0x8b5cf6,
       );
     }
-    const groups = new Map<string, string[]>();
-    for (const b of next.bosses) {
-      const group = b.description?.trim() || "";
-      const gList = groups.get(group) ?? [];
-      gList.push(escapeMarkdown(b.name));
-      groups.set(group, gList);
-    }
-    const sections: string[] = [];
-    for (const [group, names] of groups.entries()) {
-      if (group) {
-        const star = group.includes("1-Star")
-          ? "⭐ "
-          : group.includes("2-Star")
-            ? "⭐⭐ "
-            : "";
-        const cleanGroup = group.replace(/\s*Boss(es)?$/i, "");
-        sections.push(
-          `> ${star}**${escapeMarkdown(cleanGroup)}:** ${names.join(", ")}`,
+    const sec = toUnixSeconds(next.at);
+    const phtFormatted = `${DateTime.fromMillis(next.at, { zone: ZONE, locale: "en" }).toFormat("h:mm a")} PHT`;
+    const { oneStar, twoStar, other } = groupBossesByTierAndLevel(next.bosses);
+    const bossSections: string[] = [];
+
+    if (oneStar.count > 0) {
+      bossSections.push(`⭐ **1-Star Bosses (${oneStar.count})**`);
+      for (const grp of oneStar.groups) {
+        bossSections.push(
+          `**${grp.group}** ${grp.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
         );
-      } else {
-        sections.push(`> ${names.join(", ")}`);
       }
+      bossSections.push("");
     }
-    const rawDesc = `**${displayInstant(next.at)}** (<t:${Math.floor(next.at / 1000)}:R>)\n\n${sections.join("\n")}`;
-    const desc = rawDesc.length > 4000 ? `${rawDesc.slice(0, 3950)}…` : rawDesc;
-    return this.view(
+
+    if (twoStar.count > 0) {
+      bossSections.push(`⭐⭐ **2-Star Bosses (${twoStar.count})**`);
+      for (const grp of twoStar.groups) {
+        if (grp.group.includes("Guardian Beasts")) {
+          bossSections.push(
+            `**${grp.group}**\n${grp.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+          );
+        } else {
+          bossSections.push(
+            `**${grp.group}** ${grp.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+          );
+        }
+      }
+      bossSections.push("");
+    }
+
+    if (other.count > 0) {
+      bossSections.push(`**Other Bosses (${other.count})**`);
+      for (const grp of other.groups) {
+        bossSections.push(
+          `**${grp.group}** ${grp.names.map((x) => escapeMarkdown(x)).join(" • ")}`,
+        );
+      }
+      bossSections.push("");
+    }
+
+    const rawDesc = [
+      `**Philippine Time:** ${phtFormatted}`,
+      `**Your Local Time:** <t:${sec}:t>`,
+      `**Full Date:** <t:${sec}:F>`,
+      `**Starts:** <t:${sec}:R>\n`,
+      `**Scheduled Bosses (${next.bosses.length})**`,
+      bossSections.join("\n").trim(),
+    ].join("\n");
+
+    const desc =
+      rawDesc.length > 4000 ? `${rawDesc.slice(0, 3950)}…` : rawDesc;
+
+    const v = this.view(
       "⏳ NEXT BOSS SPAWN",
       desc,
       [
         row(
-          this.button(g, u, "next", "Refresh"),
-          this.button(g, u, "schedule", "Full Schedule", "0"),
+          this.button(g, u, "next", "🔄 Refresh"),
+          this.button(g, u, "schedule", "📅 Full Schedule", "0"),
           this.back(g, u, "main"),
         ),
       ],
+      0x8b5cf6,
+    );
+    v.embeds[0]!.setFooter({
+      text: "Countdown is refreshed when you open this view. In Discord, use a refresh button or timestamp.",
+    });
+    return v;
+  }
+  countdown(g: string, u: string) {
+    const next = nextSpawn(this.store.bosses(g), this.now());
+    if (!next) {
+      return this.view(
+        "⏳ NEXT BOSS COUNTDOWN",
+        "No upcoming bosses scheduled.",
+        [
+          row(
+            this.button(g, u, "countdown", "Refresh"),
+            this.button(g, u, "schedule", "Full Schedule", "0"),
+            this.back(g, u, "main"),
+          ),
+        ],
+        0x8b5cf6,
+      );
+    }
+
+    const sec = toUnixSeconds(next.at);
+    const phtFormatted = `${DateTime.fromMillis(next.at, { zone: ZONE, locale: "en" }).toFormat("h:mm a")} PHT`;
+    const { oneStar, twoStar, other } = groupBossesByTierAndLevel(next.bosses);
+
+    const desc = [
+      `**Spawn:** ${phtFormatted}`,
+      `**Your Local Time:** <t:${sec}:t>`,
+      `**Countdown:** <t:${sec}:R>`,
+      `**Bosses:** ${next.bosses.length}\n`,
+      oneStar.count > 0 ? `⭐ **1-Star:** ${oneStar.count} bosses` : "",
+      twoStar.count > 0 ? `⭐⭐ **2-Star:** ${twoStar.count} bosses` : "",
+      other.count > 0 ? `**Other:** ${other.count} bosses` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    return this.view(
+      "⏳ NEXT BOSS COUNTDOWN",
+      desc,
+      [
+        row(
+          this.button(g, u, "countdown", "🔄 Refresh"),
+          this.button(g, u, "schedule", "📅 Full Schedule", "0"),
+          this.back(g, u, "main"),
+        ),
+      ],
+      0x8b5cf6,
     );
   }
   schedule(
@@ -186,14 +308,23 @@ export class Views {
     page = Math.max(0, Math.min(pages - 1, Number.isFinite(page) ? page : 0));
     const visible = bosses.slice(page * size, (page + 1) * size);
     const rows: View["components"] = [];
-    if (mode !== "schedule" && visible.length)
+
+    if (visible.length) {
       rows.push(
         row(
           new StringSelectMenuBuilder()
             .setCustomId(
-              this.id(g, u, mode === "manage" ? "selectBoss" : "selectAlert"),
+              this.id(
+                g,
+                u,
+                mode === "manage"
+                  ? "selectBoss"
+                  : mode === "choose"
+                    ? "selectAlert"
+                    : "viewBossDetail",
+              ),
             )
-            .setPlaceholder("Choose a boss")
+            .setPlaceholder("Choose a boss for details")
             .addOptions(
               visible.map((b) => ({
                 label: b.name.slice(0, 100),
@@ -203,87 +334,147 @@ export class Views {
             ),
         ),
       );
-    const nav = [
-      this.button(g, u, mode, "Previous", String(page - 1)).setDisabled(
-        page === 0,
-      ),
-      this.button(g, u, mode, "Next", String(page + 1)).setDisabled(
-        page === pages - 1,
-      ),
+    }
+
+    const nav: ButtonBuilder[] = [];
+    if (pages > 1) {
+      nav.push(
+        this.button(g, u, mode, "Previous", String(page - 1)).setDisabled(
+          page === 0,
+        ),
+        this.button(g, u, mode, "Next", String(page + 1)).setDisabled(
+          page === pages - 1,
+        ),
+      );
+    }
+    nav.push(
       this.back(
         g,
         u,
         mode === "manage" ? "admin" : mode === "choose" ? "alerts" : "main",
       ),
-    ];
+    );
     if (mode === "manage") nav.push(this.button(g, u, "add", "Add Boss"));
     rows.push(row(...nav));
+
+    const pageSubtitle =
+      pages > 1
+        ? `Page ${page + 1} of ${pages} • ${bosses.length} bosses\nAll times below are Philippine Time.`
+        : `${bosses.length} bosses • Philippine Time (UTC+8)`;
+
     const result = this.view(
       mode === "manage"
         ? "⚙️ MANAGE BOSSES"
         : mode === "choose"
           ? "🔔 SELECT A BOSS"
           : "📅 DAILY BOSS SCHEDULE",
-      `Page ${page + 1}/${pages} · ${bosses.length} bosses\nAll times below are Philippine Time.`,
+      pageSubtitle,
       rows,
+      mode === "schedule" ? 0x8b5cf6 : 0x5865f2,
     );
-    if (!visible.length)
+
+    if (!visible.length) {
       result.embeds[0]!.addFields({
         name: "No bosses",
         value: "An administrator can use /add boss.",
       });
-    for (const b of visible)
+    }
+
+    for (const b of visible) {
       result.embeds[0]!.addFields({
         name: `${b.enabled ? "🟢" : "⏸️"} ${b.name}`,
         value: `${b.times.map(formatTime).join(" · ")}\n${escapeMarkdown(b.description).slice(0, 400) || "Daily recurrence"}`,
         inline: true,
       });
+    }
+
     return result;
   }
   boss(g: string, u: string, id: number, member = false) {
     const b = this.store.boss(g, id);
+    const starMatch = /([⭐]+)/.exec(b.description ?? "");
+    const starEmoji = starMatch
+      ? starMatch[1]
+      : b.description?.includes("2-Star")
+        ? "⭐⭐"
+        : "⭐";
+    const tierBadge = b.description?.includes("2-Star")
+      ? "2-Star Boss"
+      : b.description?.includes("1-Star")
+        ? "1-Star Boss"
+        : "Boss";
+
+    if (member) {
+      const nextAt = Math.min(
+        ...b.times.map((t) => getNextOccurrence(t, this.now())),
+      );
+      const nextSec = toUnixSeconds(nextAt);
+      const nextPht = `${DateTime.fromMillis(nextAt, { zone: ZONE }).toFormat("h:mm a")} PHT`;
+
+      const desc = [
+        `**Tier:** ${tierBadge}`,
+        `**Status:** ${b.enabled ? "Active" : "Disabled"}\n`,
+        `⏰ **Spawn Schedule**`,
+        b.times.map((t) => `• ${formatTime(t)} PHT`).join("\n") + "\n",
+        `⏱️ **Next Spawn**`,
+        `**Philippine Time:** ${nextPht}`,
+        `**Your Local Time:** <t:${nextSec}:t>`,
+        `**Starts:** <t:${nextSec}:R>`,
+      ].join("\n");
+
+      return this.view(
+        `${starEmoji} ${escapeMarkdown(b.name)}`,
+        desc,
+        [
+          row(
+            this.button(
+              g,
+              u,
+              "subscribe",
+              "Subscribe",
+              String(id),
+              ButtonStyle.Success,
+            ),
+            this.button(g, u, "unsubscribe", "Unsubscribe", String(id)),
+            this.button(g, u, "schedule", "Back to Directory", "0"),
+          ),
+        ],
+        0x8b5cf6,
+      );
+    }
+
+    const desc = [
+      `${b.enabled ? "🟢 Active" : "⏸️ Disabled"}  ${tierBadge}\n`,
+      `⏰ **Spawn Schedule**\n${b.times.map(formatTime).join(" • ")}\n`,
+      `🔔 **Alert Role**\n${b.role_id ? `<@&${b.role_id}>` : "Not configured"}`,
+    ].join("\n");
+
     return this.view(
-      member ? "🔔 BOSS ALERTS" : "⚙️ MANAGE BOSS",
-      `**${escapeMarkdown(b.name)}**\n${b.times.map(formatTime).join(" · ")}\n${escapeMarkdown(b.description)}\n\nStatus: ${b.enabled ? "Active" : "Disabled"}\nAlert role: ${b.role_id ? `<@&${b.role_id}>` : "Not configured"}`,
-      member
-        ? [
-            row(
-              this.button(
-                g,
-                u,
-                "subscribe",
-                "Subscribe",
-                String(id),
-                ButtonStyle.Success,
-              ),
-              this.button(g, u, "unsubscribe", "Unsubscribe", String(id)),
-              this.back(g, u, "alerts"),
-            ),
-          ]
-        : [
-            row(
-              this.button(g, u, "edit", "Edit", String(id)),
-              this.button(
-                g,
-                u,
-                "toggleBoss",
-                b.enabled ? "Disable" : "Enable",
-                String(id),
-              ),
-              this.button(
-                g,
-                u,
-                "remove",
-                "Remove",
-                String(id),
-                ButtonStyle.Danger,
-              ),
-            ),
-            row(
-              this.button(g, u, "bossRole", "Set Alert Role", String(id)),
-              this.back(g, u, "manage"),
-            ),
-          ],
+      `${starEmoji} ${escapeMarkdown(b.name)}`,
+      desc,
+      [
+        row(
+          this.button(g, u, "edit", "✏️ Edit", String(id)),
+          this.button(
+            g,
+            u,
+            "toggleBoss",
+            b.enabled ? "⏸️ Disable" : "▶️ Enable",
+            String(id),
+          ),
+          this.button(g, u, "bossRole", "🔔 Set Role", String(id)),
+          this.button(
+            g,
+            u,
+            "remove",
+            "🗑️ Remove",
+            String(id),
+            ButtonStyle.Danger,
+          ),
+          this.button(g, u, "manage", "← Back", "0"),
+        ),
+      ],
+      0x5865f2,
     );
   }
   remove(g: string, u: string, id: number) {
@@ -341,10 +532,82 @@ export class Views {
       .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement);
     if (s.notification_channel_id || suggested)
       menu.setDefaultChannels(s.notification_channel_id ?? suggested!);
+
+    const desc = [
+      `**Current Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "Not configured"}`,
+      `**Status:** ${s.notification_channel_id ? "🟢 Connected" : "🔴 No channel selected"}\n`,
+      `**Bot Permissions**`,
+      `• View Channel: Available`,
+      `• Send Messages: Available`,
+      `• Embed Links: Available\n`,
+      `${suggested ? `Suggested: <#${suggested}>\n` : ""}Choose a channel below, then confirm. The bot will send future spawn alerts there:`,
+    ].join("\n");
+
     return this.view(
-      "📣 NOTIFICATION CHANNEL",
-      `Current: ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "Not configured"}\n${suggested ? `Suggested: <#${suggested}>\n` : ""}Choose a channel, then confirm. The bot will not create channels.`,
-      [row(menu), row(this.back(g, u))],
+      "# NOTIFICATION CHANNEL SETTINGS",
+      desc,
+      [
+        row(menu),
+        row(
+          this.button(g, u, "test", "🧪 Test Notification"),
+          this.back(g, u),
+        ),
+      ],
+      0x5865f2,
+    );
+  }
+  status(g: string, u: string) {
+    const s = this.store.settings(g);
+    const lastLog = this.store.db
+      .prepare(
+        "SELECT status, error_message, sent_at FROM notification_logs WHERE guild_id=? ORDER BY scheduled_at DESC LIMIT 1",
+      )
+      .get(g) as
+      | { status: string; error_message: string | null; sent_at: number | null }
+      | undefined;
+
+    const lastDeliveryText = !lastLog
+      ? "No events yet"
+      : lastLog.status === "sent"
+        ? "Successful"
+        : lastLog.error_message || lastLog.status;
+
+    const next = nextSpawn(this.store.bosses(g), this.now());
+    let nextAlertText = "No upcoming alerts scheduled";
+    if (next) {
+      const intervals = (
+        JSON.parse(s.reminder_minutes) as number[]
+      ).sort((a, b) => b - a);
+      const candidates = intervals
+        .map((m) => next.at - m * 60000)
+        .filter((t) => t >= this.now());
+      const nextAlertAt =
+        candidates.length > 0 ? Math.min(...candidates) : next.at;
+      const alertSec = toUnixSeconds(nextAlertAt);
+      const alertPht = `${DateTime.fromMillis(nextAlertAt, { zone: ZONE }).toFormat("h:mm a")} PHT`;
+      nextAlertText = `**Philippine Time:** ${alertPht}\n**Your Local Time:** <t:${alertSec}:t>\n**Starts:** <t:${alertSec}:R>`;
+    }
+
+    const desc = [
+      `**Bot Status:** Online`,
+      `**Scheduler:** Running`,
+      `**Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "Not configured"}`,
+      `**Last Delivery:** ${lastDeliveryText}\n`,
+      `**Next Scheduled Alert:**`,
+      nextAlertText,
+    ].join("\n");
+
+    return this.view(
+      "📊 NOTIFICATION DELIVERY STATUS",
+      desc,
+      [
+        row(
+          this.button(g, u, "status", "🔄 Refresh"),
+          this.button(g, u, "test", "🧪 Test Notification"),
+          this.back(g, u, "admin"),
+        ),
+      ],
+      0x3b82f6,
     );
   }
   confirmChannel(g: string, u: string, id: string) {
@@ -396,33 +659,58 @@ export class Views {
       .bosses(g)
       .filter((b) => b.role_id && held.has(b.role_id));
     const isEnabled = all || bosses.length > 0;
-    const trackedText = all
-      ? "- All Gehenna Bosses"
-      : bosses.length
-        ? bosses
-            .slice(0, 20)
-            .map((b) => `- ${escapeMarkdown(b.name)}`)
-            .join("\n") + (bosses.length > 20 ? "\n…more subscriptions" : "")
-        : "None";
+
+    let subsText: string;
+    if (all) {
+      subsText =
+        "⭐ 1-Star Bosses — Subscribed\n⭐⭐ 2-Star Bosses — Subscribed\n*(All Gehenna Bosses)*";
+    } else if (bosses.length > 0) {
+      subsText =
+        bosses
+          .slice(0, 15)
+          .map((b) => `• ${escapeMarkdown(b.name)} — Subscribed`)
+          .join("\n") + (bosses.length > 15 ? "\n…more subscriptions" : "");
+    } else {
+      subsText = "None configured";
+    }
+
+    const desc = [
+      `**Status:** ${isEnabled ? "🟢 Enabled" : "🔴 Disabled"}\n`,
+      `**Subscriptions**\n${subsText}\n`,
+      `**Notification Role**\n${s.global_alert_role_id ? `<@&${s.global_alert_role_id}>` : "Not configured"}\n`,
+      `Enable Alerts subscribes to **all** bosses. Selecting an individual boss removes the all-boss role. Disable Alerts removes all opt-in roles.`,
+    ].join("\n");
+
+    const toggleButton = isEnabled
+      ? this.button(
+          g,
+          u,
+          "unsubscribe",
+          "Disable Alerts",
+          "all",
+          ButtonStyle.Danger,
+        )
+      : this.button(
+          g,
+          u,
+          "subscribe",
+          "Enable Alerts",
+          "0",
+          ButtonStyle.Success,
+        );
+
     return this.view(
       "🔔 MY BOSS ALERTS",
-      `**Status:** ${isEnabled ? "Enabled" : "Disabled"}\n\n**Tracked Bosses:**\n${trackedText}\n\nEnable Alerts subscribes to **all** bosses. Selecting an individual boss removes the all-boss role. Disable Alerts also removes retired roles recorded for your account.`,
+      desc,
       [
         row(
-          this.button(
-            g,
-            u,
-            "subscribe",
-            "Enable Alerts",
-            "0",
-            ButtonStyle.Success,
-          ),
-          this.button(g, u, "unsubscribe", "Disable Alerts", "all"),
-          this.button(g, u, "choose", "Select Bosses", "0"),
+          toggleButton,
+          this.button(g, u, "choose", "Choose Bosses", "0"),
           this.button(g, u, "schedule", "View Schedule", "0"),
         ),
         row(this.back(g, u, "main")),
       ],
+      0x8b5cf6,
     );
   }
   bossModal(g: string, u: string, boss?: Boss) {

@@ -31,9 +31,9 @@ export class PublicPanel {
     const payload = {
       embeds: [
         new EmbedBuilder()
-          .setTitle("👿 GEHENNA BOSS TRACKER")
+          .setTitle("👹 GEHENNA BOSS TRACKER")
           .setDescription(scheduleText(store, guildId))
-          .setColor(0x5865f2),
+          .setColor(0x8b5cf6),
       ],
       components: [
         row(
@@ -48,7 +48,7 @@ export class PublicPanel {
             .setCustomId(
               this.views.components.id(guildId, "0", "schedule", "0", true),
             )
-            .setLabel("View Bosses")
+            .setLabel("Boss Details")
             .setEmoji("📑")
             .setStyle(ButtonStyle.Secondary),
           new ButtonBuilder()

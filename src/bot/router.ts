@@ -19,6 +19,7 @@ import { errorCode, log, UserError } from "../utils/logger.js";
 
 const adminActions = new Set([
   "admin",
+  "more",
   "add",
   "edit",
   "remove",
@@ -98,12 +99,10 @@ export class Router {
         } else if (i.commandName === "panel") action = "main";
         else if (i.commandName === "boss") {
           action =
-            (
-              { setup: "admin", countdown: "next", list: "schedule" } as Record<
-                string,
-                string
-              >
-            )[sub!] ?? sub!;
+            ({ setup: "admin", list: "schedule" } as Record<
+              string,
+              string
+            >)[sub!] ?? sub!;
           if (action === "subscribe")
             arg = String(i.options.getInteger("boss") ?? 0);
           if (action === "unsubscribe")
@@ -163,17 +162,29 @@ export class Router {
         case "admin":
           await respond(this.views.admin(g, u));
           break;
+        case "more":
+          await respond(this.views.more(g, u));
+          break;
         case "help":
           await respond(this.views.help());
           break;
         case "next":
           await respond(this.views.next(g, u));
           break;
+        case "countdown":
+          await respond(this.views.countdown(g, u));
+          break;
         case "schedule":
         case "manage":
         case "choose":
           await respond(this.views.schedule(g, u, Number(arg) || 0, action));
           break;
+        case "viewBossDetail": {
+          const bossId = Number(arg || (i.isStringSelectMenu() && i.values[0]));
+          if (!bossId) throw new UserError("Select a boss.");
+          await respond(this.views.boss(g, u, bossId, true));
+          break;
+        }
         case "selectBoss":
         case "selectAlert": {
           if (!i.isStringSelectMenu())
@@ -410,25 +421,9 @@ export class Router {
           await this.publicPanel.refresh(g);
           await respond(this.views.schedule(g, u, 0));
           break;
-        case "status": {
-          const counts = this.store.db
-            .prepare(
-              "SELECT status,COUNT(*) AS count FROM notification_logs WHERE guild_id=? GROUP BY status",
-            )
-            .all(g) as { status: string; count: number }[];
-          const errors = this.store.db
-            .prepare(
-              "SELECT status,error_message FROM notification_logs WHERE guild_id=? AND error_message IS NOT NULL ORDER BY scheduled_at DESC LIMIT 5",
-            )
-            .all(g) as { status: string; error_message: string }[];
-          await respond(
-            this.views.view(
-              "📊 DELIVERY STATUS",
-              `${counts.map((c) => `${c.status}: **${c.count}**`).join("\n") || "No events yet."}\n\n**Recent problems**\n${errors.map((e) => `${e.status}: ${e.error_message}`).join("\n") || "None"}\n\nProcess RSS: ${Math.round(process.memoryUsage().rss / 1048576)} MB\nSee DEPLOYMENT.md for backups and recovery.`,
-            ),
-          );
+        case "status":
+          await respond(this.views.status(g, u));
           break;
-        }
         case "backup": {
           const filePath = await backup(this.store);
           await success(
