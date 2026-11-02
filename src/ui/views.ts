@@ -181,7 +181,6 @@ export class Views {
       );
     }
     const sec = toUnixSeconds(next.at);
-    const phtFormatted = `${DateTime.fromMillis(next.at, { zone: ZONE, locale: "en" }).toFormat("h:mm a")} PHT`;
     const { oneStar, twoStar, other } = groupBossesByTierAndLevel(next.bosses);
     const bossSections: string[] = [];
 
@@ -222,9 +221,6 @@ export class Views {
     }
 
     const rawDesc = [
-      `**Philippine Time:** ${phtFormatted}`,
-      `**Your Local Time:** <t:${sec}:t>`,
-      `**Full Date:** <t:${sec}:F>`,
       `**Starts:** <t:${sec}:R>\n`,
       `**Scheduled Bosses (${next.bosses.length})**`,
       bossSections.join("\n").trim(),

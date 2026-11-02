@@ -190,9 +190,9 @@ describe("Gehenna Boss Tracker V2 Redesign & Dynamic Timestamps", () => {
     const nextView = views.next(G, U);
     expect(nextView.embeds[0]!.data.title).toBe("⏳ NEXT BOSS SPAWN");
     expect(nextView.embeds[0]!.data.color).toBe(0x8b5cf6);
-    expect(nextView.embeds[0]!.data.description).toContain("Your Local Time:** <t:");
-    expect(nextView.embeds[0]!.data.description).toContain("Full Date:** <t:");
     expect(nextView.embeds[0]!.data.description).toContain("Starts:** <t:");
+    expect(nextView.embeds[0]!.data.description).not.toContain("Philippine Time:");
+    expect(nextView.embeds[0]!.data.description).not.toContain("Full Date:");
 
     const countdownView = views.countdown(G, U);
     expect(countdownView.embeds[0]!.data.title).toBe("⏳ NEXT BOSS COUNTDOWN");
