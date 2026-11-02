@@ -18,6 +18,7 @@ import { Store, settingToggles, type Boss, type ScheduleType } from "../database
 import { Components } from "./components.js";
 import {
   ZONE,
+  calculateBossRespawnStatus,
   displayInstant,
   formatPhilippineTime,
   formatTime,
@@ -46,6 +47,7 @@ const labels: Record<string, string> = {
   combine_notifications: "Combine simultaneous spawns",
   role_mentions_enabled: "Role mentions",
   daily_enabled: "Daily schedule",
+  interval_respawn_tracking_enabled: "Interval Tracking (Future)",
 };
 export class Views {
   constructor(
@@ -130,7 +132,7 @@ export class Views {
       desc,
       [
         row(
-          this.button(g, u, "add", "➕ Add Boss"),
+          this.button(g, u, "addScheduleType", "➕ Add Boss"),
           this.button(g, u, "manage", "📋 Manage", "0"),
           this.button(g, u, "schedule", "⏰ Schedule", "0"),
         ),
@@ -151,9 +153,10 @@ export class Views {
   addScheduleType(g: string, u: string) {
     const desc = [
       "Select the schedule type for the new boss:\n",
-      "• **Daily Schedule:** Spawns at fixed times every day (default).",
-      "• **Weekly Schedule:** Spawns at fixed times on specific weekdays (e.g. Mon, Wed, Fri).",
-      "• **Special Event:** Spawns on a specific calendar date (YYYY-MM-DD).",
+      "• **Daily Schedule (Type A):** Spawns at fixed times every day (default).",
+      "• **Weekly Schedule (Type B):** Spawns at fixed times on specific weekdays (e.g. Mon, Wed, Fri).",
+      "• **Special Event (Type C):** Spawns on a specific calendar date (YYYY-MM-DD).",
+      "• **Interval Respawn (Type D):** Respawns after a set duration following defeat (e.g. 4h, 8h).",
     ].join("\n");
 
     return this.view(
@@ -177,12 +180,22 @@ export class Views {
             "weekly",
             ButtonStyle.Primary,
           ),
+        ),
+        row(
           this.button(
             g,
             u,
             "addModal",
             "⭐ Special Event",
             "event",
+            ButtonStyle.Primary,
+          ),
+          this.button(
+            g,
+            u,
+            "addModal",
+            "⏳ Interval Respawn",
+            "interval",
             ButtonStyle.Primary,
           ),
         ),
@@ -394,7 +407,7 @@ export class Views {
         mode === "manage" ? "admin" : mode === "choose" ? "alerts" : "main",
       ),
     );
-    if (mode === "manage") nav.push(this.button(g, u, "add", "Add Boss"));
+    if (mode === "manage") nav.push(this.button(g, u, "addScheduleType", "Add Boss"));
     rows.push(row(...nav));
 
     const pageSubtitle =
@@ -426,6 +439,9 @@ export class Views {
         scheduleInfo = `Weekly (${formatWeeklyDays(b.recurrence_days)})`;
       } else if (b.schedule_type === "event") {
         scheduleInfo = `Special Event (${b.event_date || "Date TBD"})`;
+      } else if (b.schedule_type === "interval") {
+        const hours = Math.round((b.respawn_interval_minutes ?? 60) / 60);
+        scheduleInfo = `Interval Respawn (${hours}h)`;
       }
       result.embeds[0]!.addFields({
         name: `${b.enabled ? "🟢" : "⏸️"} ${b.name}`,
@@ -455,31 +471,65 @@ export class Views {
       scheduleBadge = `Weekly (${formatWeeklyDays(b.recurrence_days)})`;
     } else if (b.schedule_type === "event") {
       scheduleBadge = `Special Event (${b.event_date || "Date TBD"})`;
+    } else if (b.schedule_type === "interval") {
+      const hours = Math.round((b.respawn_interval_minutes ?? 60) / 60);
+      scheduleBadge = `Interval (${hours}h after defeat)`;
     }
 
     if (member) {
-      const occurrences = b.times
-        .map((t) => getNextBossOccurrence(b, t, this.now()))
-        .filter((at): at is number => at !== null);
-      const nextAt = occurrences.length ? Math.min(...occurrences) : null;
-
       let nextSpawnInfo: string[];
-      if (nextAt !== null) {
-        const nextSec = toUnixSeconds(nextAt);
-        nextSpawnInfo = [
-          `**Your Local Time:** <t:${nextSec}:t>`,
-          `**Starts:** <t:${nextSec}:R>`,
-        ];
+      if (b.schedule_type === "interval") {
+        const lastKill = this.store.latestKillReport(g, b.id);
+        const respawnStatus = calculateBossRespawnStatus(
+          b,
+          lastKill ?? undefined,
+          this.now(),
+        );
+        if (
+          respawnStatus.status === "respawn_pending" &&
+          respawnStatus.estimatedRespawnAt
+        ) {
+          const respawnSec = toUnixSeconds(respawnStatus.estimatedRespawnAt);
+          nextSpawnInfo = [
+            `**Status:** Defeated (Respawn Pending)`,
+            `**Estimated Respawn:** <t:${respawnSec}:t>`,
+            `**Respawning:** <t:${respawnSec}:R>`,
+          ];
+        } else if (respawnStatus.status === "estimated_ready") {
+          nextSpawnInfo = [
+            `**Status:** Estimated Ready / Alive`,
+            `*Respawn timer has elapsed. Defeat not yet reported.*`,
+          ];
+        } else {
+          nextSpawnInfo = [
+            `**Status:** ${b.enabled ? "Active" : "Disabled"} (Interval Tracking)`,
+            `*Report defeats with \`/boss defeated\`*`,
+          ];
+        }
       } else {
-        nextSpawnInfo = ["*No upcoming spawn scheduled*"];
+        const occurrences = b.times
+          .map((t) => getNextBossOccurrence(b, t, this.now()))
+          .filter((at): at is number => at !== null);
+        const nextAt = occurrences.length ? Math.min(...occurrences) : null;
+
+        if (nextAt !== null) {
+          const nextSec = toUnixSeconds(nextAt);
+          nextSpawnInfo = [
+            `**Your Local Time:** <t:${nextSec}:t>`,
+            `**Starts:** <t:${nextSec}:R>`,
+          ];
+        } else {
+          nextSpawnInfo = ["*No upcoming spawn scheduled*"];
+        }
       }
 
       const desc = [
         `**Tier:** ${tierBadge}`,
         `**Schedule Type:** ${scheduleBadge}`,
         `**Status:** ${b.enabled ? "Active" : "Disabled"}\n`,
-        `⏰ **Spawn Schedule**`,
-        b.times.map((t) => `• ${formatTime(t)} PHT`).join("\n") + "\n",
+        b.schedule_type === "interval"
+          ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\n⏰ **Base Spawn:** ${b.times.map(formatTime).join(" • ")}\n`
+          : `⏰ **Spawn Schedule**\n${b.times.map((t) => `• ${formatTime(t)} PHT`).join("\n")}\n`,
         `⏱️ **Next Spawn**`,
         ...nextSpawnInfo,
       ].join("\n");
@@ -507,7 +557,9 @@ export class Views {
 
     const desc = [
       `${b.enabled ? "🟢 Active" : "⏸️ Disabled"}  ${tierBadge} • ${scheduleBadge}\n`,
-      `⏰ **Spawn Schedule**\n${b.times.map(formatTime).join(" • ")}\n`,
+      b.schedule_type === "interval"
+        ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\n⏰ **Base Spawn:** ${b.times.map(formatTime).join(" • ")}\n`
+        : `⏰ **Spawn Schedule**\n${b.times.map(formatTime).join(" • ")}\n`,
       `🔔 **Alert Role**\n${b.role_id ? `<@&${b.role_id}>` : "Not configured"}`,
     ].join("\n");
 
@@ -1013,11 +1065,31 @@ export class Views {
       rows.push(
         new ActionRowBuilder<TextInputBuilder>().addComponents(dateInput),
       );
+    } else if (type === "interval") {
+      const intervalInput = new TextInputBuilder()
+        .setCustomId("interval")
+        .setLabel("Respawn Duration (e.g. 4h, 8h, 240m)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMaxLength(20);
+      if (boss?.respawn_interval_minutes) {
+        const h = boss.respawn_interval_minutes / 60;
+        intervalInput.setValue(
+          Number.isInteger(h) ? `${h}h` : `${boss.respawn_interval_minutes}m`,
+        );
+      }
+      rows.push(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(intervalInput),
+      );
     }
 
     const timesInput = new TextInputBuilder()
       .setCustomId("times")
-      .setLabel("Spawn Times (e.g. 2:00 PM, 18:00)")
+      .setLabel(
+        type === "interval"
+          ? "Initial Spawn Time (e.g. 2:00 PM)"
+          : "Spawn Times (e.g. 2:00 PM, 18:00)",
+      )
       .setStyle(TextInputStyle.Short)
       .setRequired(true)
       .setMaxLength(250);

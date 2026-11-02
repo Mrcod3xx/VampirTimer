@@ -130,10 +130,15 @@ export class Router {
       if (adminActions.has(action)) requireAdmin(i.memberPermissions);
       const g = i.guildId;
       const u = i.user.id;
-      if (
-        (action === "add" || action === "addModal" || action === "edit") &&
-        (i.isChatInputCommand() || i.isButton())
-      ) {
+      const shouldOpenModal =
+        (i.isChatInputCommand() || i.isButton()) &&
+        (action === "addModal" ||
+          action === "edit" ||
+          (action === "add" &&
+            ((i.isButton() && Boolean(arg)) ||
+              (i.isChatInputCommand() && Boolean(i.options.getString("schedule"))))));
+
+      if (shouldOpenModal && (i.isChatInputCommand() || i.isButton())) {
         let schedType: ScheduleType = "daily";
         let boss: Boss | undefined;
         if (action === "edit") {
@@ -141,10 +146,14 @@ export class Router {
           schedType = boss.schedule_type || "daily";
         } else if (action === "addModal") {
           schedType = (arg as ScheduleType) || "daily";
-        } else if (i.isChatInputCommand()) {
-          const opt = i.options.getString("schedule");
-          if (opt && ["daily", "weekly", "event", "interval"].includes(opt)) {
-            schedType = opt as ScheduleType;
+        } else if (action === "add") {
+          if (i.isChatInputCommand()) {
+            const opt = i.options.getString("schedule");
+            if (opt && ["daily", "weekly", "event", "interval"].includes(opt)) {
+              schedType = opt as ScheduleType;
+            }
+          } else if (arg && ["daily", "weekly", "event", "interval"].includes(arg)) {
+            schedType = arg as ScheduleType;
           }
         }
         await i.showModal(
@@ -245,12 +254,35 @@ export class Router {
 
           let recurrence_days: string | undefined;
           let event_date: string | undefined;
+          let respawn_interval_minutes: number | undefined;
           try {
             recurrence_days = i.fields.getTextInputValue("days");
           } catch {}
           try {
             event_date = i.fields.getTextInputValue("event_date");
           } catch {}
+          if (scheduleType === "interval") {
+            try {
+              const raw = i.fields.getTextInputValue("interval").trim();
+              const match =
+                /^(\d+)\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes)?$/i.exec(
+                  raw,
+                );
+              if (match) {
+                const val = parseInt(match[1]!, 10);
+                const unit = match[2]?.toLowerCase();
+                if (!unit || unit.startsWith("m")) {
+                  respawn_interval_minutes = val;
+                } else {
+                  respawn_interval_minutes = val * 60;
+                }
+              } else {
+                throw new UserError("Enter duration like 4h, 8h, or 240m.");
+              }
+            } catch (err) {
+              if (err instanceof UserError) throw err;
+            }
+          }
 
           const b = this.store.saveBoss(
             g,
@@ -262,6 +294,7 @@ export class Router {
               schedule_type: scheduleType,
               recurrence_days,
               event_date,
+              respawn_interval_minutes,
             },
             isNew ? undefined : Number(bossIdStr),
             u,
@@ -274,13 +307,16 @@ export class Router {
               freq = `Weekly (${formatWeeklyDays(b.recurrence_days)})`;
             } else if (b.schedule_type === "event") {
               freq = `Special Event (${b.event_date})`;
+            } else if (b.schedule_type === "interval") {
+              const hours = Math.round((b.respawn_interval_minutes ?? 60) / 60);
+              freq = `Interval Respawn (${hours}h after defeat)`;
             }
             const text = `Boss: **${escapeMarkdown(b.name)}**\n\nSchedule:\n${schedList}\n\nFrequency: ${freq}\nTimezone: Philippine Time (UTC+8)\nStatus: ${b.enabled ? "Active" : "Disabled"}\n\nNo restart required.${warning ? `\n\n⚠️ ${warning}` : ""}`;
             await respond(
               this.views.view("✅ Boss Added Successfully", text, [
                 row(
                   this.views.button(g, u, "manage", "View Bosses", "0"),
-                  this.views.button(g, u, "add", "Add Another Boss"),
+                  this.views.button(g, u, "addScheduleType", "Add Another Boss"),
                   this.views.back(g, u, "admin"),
                 ),
               ]),
@@ -558,14 +594,66 @@ export class Router {
           if (!s.interval_respawn_tracking_enabled) {
             await respond(
               this.views.view(
-                "⚠️ FEATURE NOT AVAILABLE",
-                "Boss kill and interval respawn tracking is currently disabled on this server. Contact your server administrator if this feature is needed in the future.",
+                "⚠️ FEATURE CURRENTLY DISABLED",
+                "Manual boss kill and interval respawn tracking is currently disabled on this server.\n\nAn administrator can enable it in **Admin Control Panel (/panel)** ➔ **🔔 Alerts** ➔ **Interval Tracking (Future)**.",
                 [row(this.views.back(g, u, "main"))],
                 0xf59e0b,
               ),
             );
             break;
           }
+
+          const bossId = Number(arg);
+          if (!bossId)
+            throw new UserError(
+              "Please select a boss to report as defeated. Use /boss defeated [boss].",
+            );
+          const b = this.store.boss(g, bossId);
+          const nowMs = Date.now();
+          this.store.recordKillReport(g, b.id, u, "defeat", nowMs);
+
+          const nowSec = Math.floor(nowMs / 1000);
+          const lines: string[] = [
+            `**Boss:** ${escapeMarkdown(b.name)}`,
+            `**Reported By:** <@${u}>`,
+            `**Defeated At:** <t:${nowSec}:t> (<t:${nowSec}:R>)\n`,
+          ];
+
+          if (b.schedule_type === "interval" && b.respawn_interval_minutes) {
+            const respawnMs = nowMs + b.respawn_interval_minutes * 60 * 1000;
+            const respawnSec = Math.floor(respawnMs / 1000);
+            lines.push(
+              `⏱️ **Estimated Respawn:** <t:${respawnSec}:t> (<t:${respawnSec}:R>)`,
+              `*Based on ${Math.round(b.respawn_interval_minutes / 60)}h respawn duration.*`,
+            );
+          } else {
+            lines.push(
+              `*This boss follows a fixed schedule (${b.schedule_type || "daily"}). Kill logged to history.*`,
+            );
+          }
+
+          lines.push(`\nTimezone: Philippine Time (UTC+8)`);
+
+          await respond(
+            this.views.view(
+              "⚔️ BOSS DEFEAT RECORDED",
+              lines.join("\n"),
+              [
+                row(
+                  this.views.button(
+                    g,
+                    u,
+                    "viewBossDetail",
+                    "Boss Details",
+                    String(b.id),
+                  ),
+                  this.views.button(g, u, "schedule", "View Schedule", "0"),
+                  this.views.back(g, u, "main"),
+                ),
+              ],
+              0x10b981,
+            ),
+          );
           break;
         }
         case "backup": {

@@ -326,5 +326,61 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
       const history = store.killReportHistory(G, b.id);
       expect(history.length).toBe(1);
     });
+
+    it("presents all 4 schedule types in addScheduleType including Interval Respawn", () => {
+      const v = views.addScheduleType(G, U);
+      expect(v.embeds[0]!.data.title).toBe("➕ SELECT SCHEDULE TYPE");
+      expect(v.embeds[0]!.data.description).toContain("Daily Schedule (Type A)");
+      expect(v.embeds[0]!.data.description).toContain("Weekly Schedule (Type B)");
+      expect(v.embeds[0]!.data.description).toContain("Special Event (Type C)");
+      expect(v.embeds[0]!.data.description).toContain("Interval Respawn (Type D)");
+
+      const buttonLabels = v.components.flatMap((r) =>
+        r.components.map((c) => (c.toJSON() as any).label),
+      );
+      expect(buttonLabels).toContain("📅 Daily Schedule");
+      expect(buttonLabels).toContain("🗓️ Weekly Schedule");
+      expect(buttonLabels).toContain("⭐ Special Event");
+      expect(buttonLabels).toContain("⏳ Interval Respawn");
+    });
+
+    it("creates a 5-component modal for Interval Respawn complying with Discord limits", () => {
+      const modal = views.bossModal(G, U, undefined, "interval");
+      expect(modal.data.title).toBe("Add Interval Boss");
+      expect(modal.components.length).toBe(5);
+      const customIds = modal.components.map(
+        (c) => (c.toJSON() as any).components[0].custom_id,
+      );
+      expect(customIds).toEqual([
+        "name",
+        "interval",
+        "times",
+        "description",
+        "enabled",
+      ]);
+    });
+
+    it("saves and parses interval duration into respawn_interval_minutes", () => {
+      const b = store.saveBoss(
+        G,
+        {
+          name: "Interval Dragon",
+          description: "Interval Boss",
+          times: "14:00",
+          enabled: true,
+          schedule_type: "interval",
+          respawn_interval_minutes: 480, // 8 hours
+        },
+        undefined,
+        U,
+      );
+      expect(b.schedule_type).toBe("interval");
+      expect(b.respawn_interval_minutes).toBe(480);
+
+      // Verify boss detail view formatting
+      const bView = views.boss(G, U, b.id, false);
+      expect(bView.embeds[0]!.data.description).toContain("Interval (8h after defeat)");
+      expect(bView.embeds[0]!.data.description).toContain("Respawn Interval:** 8 hours after defeat");
+    });
   });
 });

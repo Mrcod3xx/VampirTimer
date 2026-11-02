@@ -7,13 +7,21 @@ export const commands = [
     ...["add", "edit", "remove"].map((action) => {
         const command = base(action, `${action} a boss`).setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
         command.addSubcommand((sub) => {
-            sub.setName("boss").setDescription(`${action} a daily boss`);
-            if (action !== "add")
+            sub.setName("boss").setDescription(`${action} a boss`);
+            if (action !== "add") {
                 sub.addIntegerOption((o) => o
                     .setName("boss")
                     .setDescription("Select a boss")
                     .setRequired(true)
                     .setAutocomplete(true));
+            }
+            else {
+                sub.addStringOption((o) => o
+                    .setName("schedule")
+                    .setDescription("Schedule type (or omit to choose from menu)")
+                    .setRequired(false)
+                    .addChoices({ name: "📅 Daily Schedule", value: "daily" }, { name: "🗓️ Weekly Schedule", value: "weekly" }, { name: "⭐ Special Event", value: "event" }, { name: "⏳ Interval Respawn", value: "interval" }));
+            }
             return sub;
         });
         return command;
