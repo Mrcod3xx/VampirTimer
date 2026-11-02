@@ -5,6 +5,7 @@ import { createClient } from "./bot/client.js";
 import { Components } from "./ui/components.js";
 import { Views } from "./ui/views.js";
 import { Router } from "./bot/router.js";
+import { commands } from "./bot/commands.js";
 import { Notifications } from "./services/notifications.js";
 import { Scheduler } from "./services/scheduler.js";
 import { errorCode, log } from "./utils/logger.js";
@@ -43,6 +44,28 @@ async function main() {
                 await router.publicPanel.refresh(guild.id).catch(() => { });
             }
             scheduler.start();
+            // Auto-sync slash commands so newly added commands appear immediately
+            try {
+                if (config.DISCORD_GUILD_ID) {
+                    const guild = client.guilds.cache.get(config.DISCORD_GUILD_ID);
+                    if (guild) {
+                        await guild.commands.set(commands);
+                        log("info", "Synced slash commands to guild", {
+                            guild: config.DISCORD_GUILD_ID,
+                            count: commands.length,
+                        });
+                    }
+                }
+                else if (client.application) {
+                    await client.application.commands.set(commands);
+                    log("info", "Synced slash commands globally", {
+                        count: commands.length,
+                    });
+                }
+            }
+            catch (err) {
+                log("warn", "Automatic slash command sync failed; run 'npm run register' if commands are missing", { code: errorCode(err) });
+            }
             log("info", "Boss tracker ready", {
                 guilds: client.guilds.cache.size,
                 rssMB: Math.round(process.memoryUsage().rss / 1048576),
