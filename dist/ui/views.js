@@ -1,7 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, EmbedBuilder, ModalBuilder, RoleSelectMenuBuilder, StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown, } from "discord.js";
 import { DateTime } from "luxon";
 import { settingToggles } from "../database/store.js";
-import { ZONE, formatTime, getNextOccurrence, groupBossesByTierAndLevel, nextSpawn, toUnixSeconds, zoneLabel, } from "../utils/time.js";
+import { ZONE, formatTime, formatWeeklyDays, getNextBossOccurrence, groupBossesByTierAndLevel, nextSpawn, toUnixSeconds, zoneLabel, } from "../utils/time.js";
 export const row = (...components) => new ActionRowBuilder().addComponents(components);
 const labels = {
     notifications_enabled: "All notifications",
@@ -76,10 +76,22 @@ export class Views {
             row(this.button(g, u, "test", "🧪 Test"), this.button(g, u, "status", "📊 Status"), this.button(g, u, "more", "⚙️ More")),
         ], 0x5865f2);
     }
+    addScheduleType(g, u) {
+        const desc = [
+            "Select the schedule type for the new boss:\n",
+            "• **Daily Schedule:** Spawns at fixed times every day (default).",
+            "• **Weekly Schedule:** Spawns at fixed times on specific weekdays (e.g. Mon, Wed, Fri).",
+            "• **Special Event:** Spawns on a specific calendar date (YYYY-MM-DD).",
+        ].join("\n");
+        return this.view("➕ SELECT SCHEDULE TYPE", desc, [
+            row(this.button(g, u, "addModal", "📅 Daily Schedule", "daily", ButtonStyle.Primary), this.button(g, u, "addModal", "🗓️ Weekly Schedule", "weekly", ButtonStyle.Primary), this.button(g, u, "addModal", "⭐ Special Event", "event", ButtonStyle.Primary)),
+            row(this.back(g, u, "admin")),
+        ], 0x5865f2);
+    }
     more(g, u) {
         return this.view("⚙️ ADVANCED ADMIN TOOLS", "Additional management controls for the boss tracker.", [
-            row(this.button(g, u, "publish", "📢 Publish Schedule"), this.button(g, u, "resetPanel", "🔄 Reset Public Panel"), this.button(g, u, "intervals", "⏰ Reminder Intervals")),
-            row(this.button(g, u, "backup", "💾 Backup Database"), this.back(g, u, "admin")),
+            row(this.button(g, u, "publish", "📢 Publish Schedule"), this.button(g, u, "resetPanel", "🔄 Reset Public Panel"), this.button(g, u, "audit", "📜 Audit Logs", "all:0")),
+            row(this.button(g, u, "intervals", "⏰ Reminder Intervals"), this.button(g, u, "backup", "💾 Backup Database"), this.back(g, u, "admin")),
         ], 0x5865f2);
     }
     next(g, u) {
@@ -140,13 +152,11 @@ export class Views {
             ], 0x8b5cf6);
         }
         const sec = toUnixSeconds(next.at);
-        const phtFormatted = `${DateTime.fromMillis(next.at, { zone: ZONE, locale: "en" }).toFormat("h:mm a")} PHT`;
         const { oneStar, twoStar, other } = groupBossesByTierAndLevel(next.bosses);
         const desc = [
-            `**Spawn:** ${phtFormatted}`,
-            `**Your Local Time:** <t:${sec}:t>`,
             `**Countdown:** <t:${sec}:R>`,
-            `**Bosses:** ${next.bosses.length}\n`,
+            `**Starts:** <t:${sec}:t>`,
+            `**Scheduled Bosses (${next.bosses.length})**\n`,
             oneStar.count > 0 ? `⭐ **1-Star:** ${oneStar.count} bosses` : "",
             twoStar.count > 0 ? `⭐⭐ **2-Star:** ${twoStar.count} bosses` : "",
             other.count > 0 ? `**Other:** ${other.count} bosses` : "",
@@ -201,9 +211,16 @@ export class Views {
             });
         }
         for (const b of visible) {
+            let scheduleInfo = "Daily recurrence";
+            if (b.schedule_type === "weekly") {
+                scheduleInfo = `Weekly (${formatWeeklyDays(b.recurrence_days)})`;
+            }
+            else if (b.schedule_type === "event") {
+                scheduleInfo = `Special Event (${b.event_date || "Date TBD"})`;
+            }
             result.embeds[0].addFields({
                 name: `${b.enabled ? "🟢" : "⏸️"} ${b.name}`,
-                value: `${b.times.map(formatTime).join(" · ")}\n${escapeMarkdown(b.description).slice(0, 400) || "Daily recurrence"}`,
+                value: `${b.times.map(formatTime).join(" · ")}\n${scheduleInfo}${b.description ? ` • ${escapeMarkdown(b.description).slice(0, 150)}` : ""}`,
                 inline: true,
             });
         }
@@ -222,26 +239,44 @@ export class Views {
             : b.description?.includes("1-Star")
                 ? "1-Star Boss"
                 : "Boss";
+        let scheduleBadge = "Daily";
+        if (b.schedule_type === "weekly") {
+            scheduleBadge = `Weekly (${formatWeeklyDays(b.recurrence_days)})`;
+        }
+        else if (b.schedule_type === "event") {
+            scheduleBadge = `Special Event (${b.event_date || "Date TBD"})`;
+        }
         if (member) {
-            const nextAt = Math.min(...b.times.map((t) => getNextOccurrence(t, this.now())));
-            const nextSec = toUnixSeconds(nextAt);
-            const nextPht = `${DateTime.fromMillis(nextAt, { zone: ZONE }).toFormat("h:mm a")} PHT`;
+            const occurrences = b.times
+                .map((t) => getNextBossOccurrence(b, t, this.now()))
+                .filter((at) => at !== null);
+            const nextAt = occurrences.length ? Math.min(...occurrences) : null;
+            let nextSpawnInfo;
+            if (nextAt !== null) {
+                const nextSec = toUnixSeconds(nextAt);
+                nextSpawnInfo = [
+                    `**Your Local Time:** <t:${nextSec}:t>`,
+                    `**Starts:** <t:${nextSec}:R>`,
+                ];
+            }
+            else {
+                nextSpawnInfo = ["*No upcoming spawn scheduled*"];
+            }
             const desc = [
                 `**Tier:** ${tierBadge}`,
+                `**Schedule Type:** ${scheduleBadge}`,
                 `**Status:** ${b.enabled ? "Active" : "Disabled"}\n`,
                 `⏰ **Spawn Schedule**`,
                 b.times.map((t) => `• ${formatTime(t)} PHT`).join("\n") + "\n",
                 `⏱️ **Next Spawn**`,
-                `**Philippine Time:** ${nextPht}`,
-                `**Your Local Time:** <t:${nextSec}:t>`,
-                `**Starts:** <t:${nextSec}:R>`,
+                ...nextSpawnInfo,
             ].join("\n");
             return this.view(`${starEmoji} ${escapeMarkdown(b.name)}`, desc, [
                 row(this.button(g, u, "subscribe", "Subscribe", String(id), ButtonStyle.Success), this.button(g, u, "unsubscribe", "Unsubscribe", String(id)), this.button(g, u, "schedule", "Back to Directory", "0")),
             ], 0x8b5cf6);
         }
         const desc = [
-            `${b.enabled ? "🟢 Active" : "⏸️ Disabled"}  ${tierBadge}\n`,
+            `${b.enabled ? "🟢 Active" : "⏸️ Disabled"}  ${tierBadge} • ${scheduleBadge}\n`,
             `⏰ **Spawn Schedule**\n${b.times.map(formatTime).join(" • ")}\n`,
             `🔔 **Alert Role**\n${b.role_id ? `<@&${b.role_id}>` : "Not configured"}`,
         ].join("\n");
@@ -289,13 +324,24 @@ export class Views {
     status(g, u) {
         const s = this.store.settings(g);
         const lastLog = this.store.db
-            .prepare("SELECT status, error_message, sent_at FROM notification_logs WHERE guild_id=? ORDER BY scheduled_at DESC LIMIT 1")
+            .prepare("SELECT status, error_message, scheduled_at, sent_at FROM notification_logs WHERE guild_id=? ORDER BY scheduled_at DESC LIMIT 1")
             .get(g);
-        const lastDeliveryText = !lastLog
-            ? "No events yet"
-            : lastLog.status === "sent"
-                ? "Successful"
-                : lastLog.error_message || lastLog.status;
+        let lastDeliveryText = "No events yet";
+        if (lastLog) {
+            const sec = toUnixSeconds(lastLog.sent_at || lastLog.scheduled_at);
+            if (lastLog.status === "sent") {
+                lastDeliveryText = `🟢 Successful (<t:${sec}:R>)`;
+            }
+            else {
+                lastDeliveryText = `🔴 ${lastLog.error_message || lastLog.status} (<t:${sec}:R>)`;
+            }
+        }
+        const failedCount = this.store.db
+            .prepare("SELECT COUNT(*) AS count FROM notification_logs WHERE guild_id=? AND (status='failed' OR error_message IS NOT NULL)")
+            .get(g).count;
+        const missedCount = this.store.db
+            .prepare("SELECT COUNT(*) AS count FROM notification_logs WHERE guild_id=? AND status='missed'")
+            .get(g).count;
         const next = nextSpawn(this.store.bosses(g), this.now());
         let nextAlertText = "No upcoming alerts scheduled";
         if (next) {
@@ -305,20 +351,127 @@ export class Views {
                 .filter((t) => t >= this.now());
             const nextAlertAt = candidates.length > 0 ? Math.min(...candidates) : next.at;
             const alertSec = toUnixSeconds(nextAlertAt);
-            const alertPht = `${DateTime.fromMillis(nextAlertAt, { zone: ZONE }).toFormat("h:mm a")} PHT`;
-            nextAlertText = `**Philippine Time:** ${alertPht}\n**Your Local Time:** <t:${alertSec}:t>\n**Starts:** <t:${alertSec}:R>`;
+            nextAlertText = `<t:${alertSec}:t> (<t:${alertSec}:R>)`;
         }
         const desc = [
-            `**Bot Status:** Online`,
-            `**Scheduler:** Running`,
-            `**Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "Not configured"}`,
-            `**Last Delivery:** ${lastDeliveryText}\n`,
-            `**Next Scheduled Alert:**`,
-            nextAlertText,
+            `**Bot Status:** 🟢 Online`,
+            `**Scheduler:** 🟢 Running`,
+            `**Database:** 🟢 Connected (SQLite WAL)`,
+            `**Timezone:** Philippine Time (UTC+8)\n`,
+            `**Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "🔴 Not configured"}`,
+            `**Last Delivery:** ${lastDeliveryText}`,
+            `**Next Scheduled Alert:** ${nextAlertText}\n`,
+            `**Reliability Metrics (Last 30 Days)**`,
+            `• Failed Deliveries: **${failedCount}**`,
+            `• Missed Reminders: **${missedCount}**`,
         ].join("\n");
-        return this.view("📊 NOTIFICATION DELIVERY STATUS", desc, [
-            row(this.button(g, u, "status", "🔄 Refresh"), this.button(g, u, "test", "🧪 Test Notification"), this.back(g, u, "admin")),
+        return this.view("📊 BOT SYSTEM STATUS", desc, [
+            row(this.button(g, u, "status", "🔄 Refresh"), this.button(g, u, "deliveryLogs", "📋 Delivery Logs", "0"), this.button(g, u, "audit", "📜 Audit Logs", "all:0")),
+            row(this.button(g, u, "test", "🧪 Test Notification"), this.back(g, u, "admin")),
         ], 0x3b82f6);
+    }
+    deliveryLogs(g, u, page = 0) {
+        const size = 6;
+        const totalCount = this.store.db
+            .prepare("SELECT COUNT(*) AS count FROM notification_logs WHERE guild_id=?")
+            .get(g).count;
+        const pages = Math.max(1, Math.ceil(totalCount / size));
+        page = Math.max(0, Math.min(pages - 1, Number.isFinite(page) ? page : 0));
+        const logs = this.store.db
+            .prepare("SELECT * FROM notification_logs WHERE guild_id=? ORDER BY scheduled_at DESC LIMIT ? OFFSET ?")
+            .all(g, size, page * size);
+        const rows = [];
+        const nav = [];
+        if (pages > 1) {
+            nav.push(this.button(g, u, "deliveryLogs", "Previous", String(page - 1)).setDisabled(page === 0), this.button(g, u, "deliveryLogs", "Next", String(page + 1)).setDisabled(page === pages - 1));
+        }
+        nav.push(this.button(g, u, "status", "← Back to Status"));
+        rows.push(row(...nav));
+        const statusIcons = {
+            sent: "🟢 Sent",
+            failed: "🔴 Failed",
+            missed: "⚠️ Missed",
+            pending: "⏳ Pending",
+            cancelled: "⚪ Cancelled",
+        };
+        const lines = logs.map((log) => {
+            const icon = statusIcons[log.status] || log.status;
+            const timeSec = toUnixSeconds(log.scheduled_at);
+            const typeLabel = log.minutes === 0 ? "Exact Spawn Alert" : `${log.minutes}-Min Warning`;
+            const err = log.error_message
+                ? `\n  *Error: ${escapeMarkdown(log.error_message)}*`
+                : "";
+            return `• **<t:${timeSec}:f>** (<t:${timeSec}:R>)\n  Type: \`${typeLabel}\` • Status: ${icon}${err}`;
+        });
+        const desc = logs.length
+            ? `Showing recent delivery history (Page ${page + 1} of ${pages} • ${totalCount} total events):\n\n${lines.join("\n\n")}`
+            : "No notification logs recorded yet.";
+        return this.view("📋 NOTIFICATION DELIVERY LOGS", desc, rows, 0x3b82f6);
+    }
+    audit(g, u, filter = "all", page = 0) {
+        const size = 6;
+        const queryFilter = filter === "all" ? undefined : filter;
+        const totalCount = this.store.auditLogCount(g, queryFilter);
+        const pages = Math.max(1, Math.ceil(totalCount / size));
+        page = Math.max(0, Math.min(pages - 1, Number.isFinite(page) ? page : 0));
+        const logs = this.store.auditLogs(g, queryFilter, size, page * size);
+        const rows = [];
+        // Filter select menu
+        rows.push(row(new StringSelectMenuBuilder()
+            .setCustomId(this.id(g, u, "auditFilter"))
+            .setPlaceholder("Filter by category")
+            .addOptions([
+            { label: "All Changes", value: "all", default: filter === "all" },
+            { label: "Boss Changes", value: "boss", default: filter === "boss" },
+            {
+                label: "Channel Changes",
+                value: "channel",
+                default: filter === "channel",
+            },
+            {
+                label: "Settings & Roles",
+                value: "settings",
+                default: filter === "settings",
+            },
+        ])));
+        const nav = [];
+        if (pages > 1) {
+            nav.push(this.button(g, u, "auditPage", "Previous", `${filter}:${page - 1}`).setDisabled(page === 0), this.button(g, u, "auditPage", "Next", `${filter}:${page + 1}`).setDisabled(page === pages - 1));
+        }
+        nav.push(this.back(g, u, "admin"));
+        rows.push(row(...nav));
+        const actionIcons = {
+            boss_add: "➕ Boss Added",
+            boss_edit: "✏️ Boss Edited",
+            boss_remove: "🗑️ Boss Removed",
+            boss_toggle: "⏸️ Boss Toggled",
+            channel_set: "📢 Channel Set",
+            role_set: "🔔 Role Set",
+            settings_update: "⚙️ Settings Updated",
+            schedule_publish: "📢 Schedule Published",
+            panel_reset: "🔄 Panel Reset",
+            backup_create: "💾 Backup Created",
+        };
+        const lines = logs.map((log) => {
+            const timeSec = toUnixSeconds(log.created_at);
+            const title = actionIcons[log.action_type] || log.action_type;
+            const user = log.user_id === "system" ? "*System*" : `<@${log.user_id}>`;
+            let change = "";
+            if (log.previous_value && log.new_value) {
+                change = `\n  \`${escapeMarkdown(log.previous_value)}\` ➔ \`${escapeMarkdown(log.new_value)}\``;
+            }
+            else if (log.new_value) {
+                change = `\n  \`${escapeMarkdown(log.new_value.slice(0, 150))}\``;
+            }
+            else if (log.previous_value) {
+                change = `\n  \`${escapeMarkdown(log.previous_value.slice(0, 150))}\``;
+            }
+            return `• **${title}** by ${user} • <t:${timeSec}:R>${change}`;
+        });
+        const desc = logs.length
+            ? `Showing administrative changes (Page ${page + 1} of ${pages} • ${totalCount} entries):\n\n${lines.join("\n\n")}`
+            : `No audit log entries recorded${filter !== "all" ? ` for category "${filter}"` : ""}.`;
+        return this.view("📜 ADMIN AUDIT LOGS", desc, rows, 0x5865f2);
     }
     confirmChannel(g, u, id) {
         return this.view("📣 CONFIRM CHANNEL", `Send future scheduled notifications to <#${id}>?`, [
@@ -372,41 +525,75 @@ export class Views {
             row(this.back(g, u, "main")),
         ], 0x8b5cf6);
     }
-    bossModal(g, u, boss) {
+    bossModal(g, u, boss, scheduleType) {
+        const type = (boss?.schedule_type ||
+            scheduleType ||
+            "daily");
         const modal = new ModalBuilder()
-            .setCustomId(this.id(g, u, "saveBoss", boss ? String(boss.id) : "new"))
-            .setTitle(boss ? "Edit Boss" : "Add Boss");
-        const fields = [
-            ["name", "Boss Name", boss?.name ?? "", true, 80],
-            [
-                "times",
-                "Spawn Times (e.g. 2:00 PM, 18:00)",
-                boss?.times.join(", ") ?? "",
-                true,
-                250,
-            ],
-            ["description", "Description", boss?.description ?? "", false, 800],
-            [
-                "enabled",
-                "Enabled: yes or no",
-                boss?.enabled === 0 ? "no" : "yes",
-                true,
-                3,
-            ],
-        ];
-        for (const [id, label, value, required, max] of fields) {
-            const input = new TextInputBuilder()
-                .setCustomId(id)
-                .setLabel(label)
-                .setStyle(id === "description"
-                ? TextInputStyle.Paragraph
-                : TextInputStyle.Short)
-                .setRequired(required)
-                .setMaxLength(max);
-            if (value)
-                input.setValue(value);
-            modal.addComponents(new ActionRowBuilder().addComponents(input));
+            .setCustomId(this.id(g, u, "saveBoss", `${boss ? boss.id : "new"}:${type}`))
+            .setTitle(boss
+            ? `Edit ${type === "event" ? "Event" : type.charAt(0).toUpperCase() + type.slice(1)} Boss`
+            : `Add ${type === "event" ? "Event" : type.charAt(0).toUpperCase() + type.slice(1)} Boss`);
+        const rows = [];
+        const nameInput = new TextInputBuilder()
+            .setCustomId("name")
+            .setLabel("Boss Name")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(80);
+        if (boss?.name)
+            nameInput.setValue(boss.name);
+        rows.push(new ActionRowBuilder().addComponents(nameInput));
+        if (type === "weekly") {
+            const daysInput = new TextInputBuilder()
+                .setCustomId("days")
+                .setLabel("Days (e.g. Mon, Wed, Fri)")
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+                .setMaxLength(100);
+            if (boss?.recurrence_days) {
+                daysInput.setValue(formatWeeklyDays(boss.recurrence_days));
+            }
+            rows.push(new ActionRowBuilder().addComponents(daysInput));
         }
+        else if (type === "event") {
+            const dateInput = new TextInputBuilder()
+                .setCustomId("event_date")
+                .setLabel("Event Date (YYYY-MM-DD)")
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+                .setMaxLength(20);
+            if (boss?.event_date)
+                dateInput.setValue(boss.event_date);
+            rows.push(new ActionRowBuilder().addComponents(dateInput));
+        }
+        const timesInput = new TextInputBuilder()
+            .setCustomId("times")
+            .setLabel("Spawn Times (e.g. 2:00 PM, 18:00)")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(250);
+        if (boss?.times.length)
+            timesInput.setValue(boss.times.join(", "));
+        rows.push(new ActionRowBuilder().addComponents(timesInput));
+        const descInput = new TextInputBuilder()
+            .setCustomId("description")
+            .setLabel("Description / Tier (e.g. 1-Star Boss)")
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(false)
+            .setMaxLength(800);
+        if (boss?.description)
+            descInput.setValue(boss.description);
+        rows.push(new ActionRowBuilder().addComponents(descInput));
+        const enabledInput = new TextInputBuilder()
+            .setCustomId("enabled")
+            .setLabel("Enabled: yes or no")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(3)
+            .setValue(boss?.enabled === 0 ? "no" : "yes");
+        rows.push(new ActionRowBuilder().addComponents(enabledInput));
+        modal.addComponents(rows);
         return modal;
     }
     intervalsModal(g, u) {

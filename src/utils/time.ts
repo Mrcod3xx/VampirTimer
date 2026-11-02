@@ -83,29 +83,276 @@ export function getNextOccurrence(timeStr: string, nowMs = Date.now()): number {
   return target.toMillis();
 }
 
+const WEEKDAY_NAMES: Record<string, string> = {
+  mon: "mon",
+  monday: "mon",
+  "1": "mon",
+  tue: "tue",
+  tues: "tue",
+  tuesday: "tue",
+  "2": "tue",
+  wed: "wed",
+  wednesday: "wed",
+  "3": "wed",
+  thu: "thu",
+  thur: "thu",
+  thurs: "thu",
+  thursday: "thu",
+  "4": "thu",
+  fri: "fri",
+  friday: "fri",
+  "5": "fri",
+  sat: "sat",
+  saturday: "sat",
+  "6": "sat",
+  sun: "sun",
+  sunday: "sun",
+  "7": "sun",
+};
+
+export const ORDERED_WEEKDAYS = [
+  "mon",
+  "tue",
+  "wed",
+  "thu",
+  "fri",
+  "sat",
+  "sun",
+] as const;
+
+export function normalizeWeekdays(
+  input: string | string[] | null | undefined,
+): string[] {
+  if (!input) return [];
+  let items: string[];
+  if (Array.isArray(input)) {
+    items = input;
+  } else {
+    try {
+      const parsed = JSON.parse(input);
+      if (Array.isArray(parsed)) items = parsed.map(String);
+      else items = input.split(",").map((s) => s.trim());
+    } catch {
+      items = input.split(",").map((s) => s.trim());
+    }
+  }
+  const set = new Set<string>();
+  for (const item of items) {
+    const clean = item.trim().toLowerCase();
+    const mapped = WEEKDAY_NAMES[clean];
+    if (mapped) set.add(mapped);
+  }
+  return ORDERED_WEEKDAYS.filter((d) => set.has(d));
+}
+
+export function formatWeeklyDays(
+  input: string | string[] | null | undefined,
+): string {
+  const days = normalizeWeekdays(input);
+  if (!days.length) return "None";
+  const map: Record<string, string> = {
+    mon: "Mon",
+    tue: "Tue",
+    wed: "Wed",
+    thu: "Thu",
+    fri: "Fri",
+    sat: "Sat",
+    sun: "Sun",
+  };
+  return days.map((d) => map[d] || d).join(", ");
+}
+
+export function parseEventDate(input: string): string {
+  const trimmed = input.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!match) throw new UserError("Event date must use YYYY-MM-DD format (e.g. 2026-12-15).");
+  const dt = DateTime.fromISO(trimmed, { zone: ZONE });
+  if (!dt.isValid) throw new UserError("Invalid calendar date.");
+  return dt.toFormat("yyyy-MM-dd");
+}
+
+export function isBossDueOnDay(
+  boss: {
+    schedule_type?: string;
+    recurrence_days?: string | null;
+    event_date?: string | null;
+  },
+  day: DateTime,
+  intervalTrackingEnabled = false,
+): boolean {
+  const type = boss.schedule_type || "daily";
+  if (type === "daily") return true;
+  if (type === "weekly") {
+    const valid = normalizeWeekdays(boss.recurrence_days);
+    return valid.includes(day.toFormat("ccc").toLowerCase());
+  }
+  if (type === "event") {
+    return Boolean(boss.event_date && day.toFormat("yyyy-MM-dd") === boss.event_date);
+  }
+  if (type === "interval") {
+    return intervalTrackingEnabled;
+  }
+  return true;
+}
+
+export function getNextBossOccurrence(
+  boss: TimedBoss,
+  timeStr: string,
+  nowMs = Date.now(),
+  intervalTrackingEnabled = false,
+): number | null {
+  const type = boss.schedule_type || "daily";
+  const dayNow = DateTime.fromMillis(nowMs, { zone: ZONE });
+
+  if (type === "event") {
+    if (!boss.event_date) return null;
+    const dt = DateTime.fromFormat(`${boss.event_date} ${timeStr}`, "yyyy-MM-dd HH:mm", {
+      zone: ZONE,
+    });
+    if (!dt.isValid) return null;
+    const ms = dt.toMillis();
+    return ms >= nowMs ? ms : null;
+  }
+
+  if (type === "weekly") {
+    const validDays = normalizeWeekdays(boss.recurrence_days);
+    if (!validDays.length) return null;
+    for (let offset = 0; offset <= 7; offset++) {
+      const candDay = dayNow.plus({ days: offset });
+      const dayCode = candDay.toFormat("ccc").toLowerCase();
+      if (validDays.includes(dayCode)) {
+        const candMs = atTime(candDay, timeStr).toMillis();
+        if (candMs >= nowMs) return candMs;
+      }
+    }
+    return null;
+  }
+
+  if (type === "interval") {
+    return null; // Disabled initially
+  }
+
+  // Daily
+  let cand = atTime(dayNow, timeStr).toMillis();
+  if (cand < nowMs) {
+    cand = atTime(dayNow.plus({ days: 1 }), timeStr).toMillis();
+  }
+  return cand;
+}
+
 export interface TimedBoss {
   id: number;
   name: string;
   description?: string;
   enabled: number;
   times: string[];
+  schedule_type?: string;
+  recurrence_days?: string | null;
+  event_date?: string | null;
+  respawn_interval_minutes?: number | null;
+  respawn_trigger_type?: string | null;
 }
 
-export function nextSpawn(bosses: TimedBoss[], now: number) {
-  const day = DateTime.fromMillis(now, { zone: ZONE });
+export function nextSpawn(
+  bosses: TimedBoss[],
+  now: number,
+  intervalTrackingEnabled = false,
+) {
   const candidates = bosses
     .filter((b) => b.enabled)
     .flatMap((boss) =>
       boss.times.map((time) => {
-        let at = atTime(day, time);
-        if (at.toMillis() < now) at = at.plus({ days: 1 });
-        return { boss, at: at.toMillis() };
+        const at = getNextBossOccurrence(
+          boss,
+          time,
+          now,
+          intervalTrackingEnabled,
+        );
+        return at !== null ? { boss, at } : null;
       }),
-    );
+    )
+    .filter((c): c is { boss: TimedBoss; at: number } => c !== null);
+
+  if (!candidates.length) return null;
   const at = Math.min(...candidates.map((c) => c.at));
   return Number.isFinite(at)
     ? { at, bosses: candidates.filter((c) => c.at === at).map((c) => c.boss) }
     : null;
+}
+
+export type BossRespawnStatus =
+  | "unknown"
+  | "defeated"
+  | "respawn_pending"
+  | "estimated_ready"
+  | "confirmed_alive";
+
+export function calculateBossRespawnStatus(
+  boss: { respawn_interval_minutes?: number | null },
+  latestReport?: {
+    report_type: "defeat" | "alive" | "correction";
+    reported_at: number;
+  },
+  now = Date.now(),
+): {
+  status: BossRespawnStatus;
+  statusLabel: string;
+  lastDefeatedAt: number | null;
+  estimatedRespawnAt: number | null;
+  confirmedAliveAt: number | null;
+} {
+  const intervalMinutes = boss.respawn_interval_minutes ?? 0;
+  if (!latestReport) {
+    return {
+      status: "unknown",
+      statusLabel: "Unknown",
+      lastDefeatedAt: null,
+      estimatedRespawnAt: null,
+      confirmedAliveAt: null,
+    };
+  }
+
+  if (latestReport.report_type === "alive") {
+    return {
+      status: "confirmed_alive",
+      statusLabel: "Confirmed Alive",
+      lastDefeatedAt: null,
+      estimatedRespawnAt: null,
+      confirmedAliveAt: latestReport.reported_at,
+    };
+  }
+
+  const defeatedAt = latestReport.reported_at;
+  const estimatedRespawn =
+    intervalMinutes > 0 ? defeatedAt + intervalMinutes * 60_000 : null;
+
+  if (estimatedRespawn === null) {
+    return {
+      status: "defeated",
+      statusLabel: "Defeated",
+      lastDefeatedAt: defeatedAt,
+      estimatedRespawnAt: null,
+      confirmedAliveAt: null,
+    };
+  }
+
+  if (now < estimatedRespawn) {
+    return {
+      status: "respawn_pending",
+      statusLabel: "Respawn Pending",
+      lastDefeatedAt: defeatedAt,
+      estimatedRespawnAt: estimatedRespawn,
+      confirmedAliveAt: null,
+    };
+  } else {
+    return {
+      status: "estimated_ready",
+      statusLabel: "Estimated Ready",
+      lastDefeatedAt: defeatedAt,
+      estimatedRespawnAt: estimatedRespawn,
+      confirmedAliveAt: null,
+    };
+  }
 }
 
 export interface BossGroup {

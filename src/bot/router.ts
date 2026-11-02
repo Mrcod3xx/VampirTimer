@@ -7,20 +7,22 @@ import {
   type Interaction,
   type RepliableInteraction,
 } from "discord.js";
-import { Store, settingToggles } from "../database/store.js";
+import { Store, settingToggles, type Boss, type ScheduleType } from "../database/store.js";
 import { row, Views, type View } from "../ui/views.js";
 import { Notifications } from "../services/notifications.js";
 import { Subscriptions } from "../services/subscriptions.js";
 import { PublicPanel } from "../services/publicPanel.js";
 import { backup } from "../services/backup.js";
 import { requireAdmin } from "../utils/permissions.js";
-import { formatTime, parseTimes } from "../utils/time.js";
+import { formatTime, formatWeeklyDays, parseTimes } from "../utils/time.js";
 import { errorCode, log, UserError } from "../utils/logger.js";
 
 const adminActions = new Set([
   "admin",
   "more",
   "add",
+  "addScheduleType",
+  "addModal",
   "edit",
   "remove",
   "confirmRemove",
@@ -42,6 +44,10 @@ const adminActions = new Set([
   "test",
   "publish",
   "status",
+  "deliveryLogs",
+  "audit",
+  "auditFilter",
+  "auditPage",
   "backup",
   "resetPanel",
   "confirmResetPanel",
@@ -105,8 +111,14 @@ export class Router {
             >)[sub!] ?? sub!;
           if (action === "subscribe")
             arg = String(i.options.getInteger("boss") ?? 0);
-          if (action === "unsubscribe")
+          else if (action === "unsubscribe")
             arg = String(i.options.getInteger("boss") ?? "all");
+          else if (action === "audit") {
+            const filter = i.options.getString("filter") || "all";
+            arg = `${filter}:0`;
+          } else if (action === "defeated") {
+            arg = String(i.options.getInteger("boss") ?? "");
+          }
         } else throw new UserError("Unknown command. Use /boss help.");
       } else if (i.isButton() || i.isAnySelectMenu() || i.isModalSubmit()) {
         ({ action, arg } = this.views.components.decode(
@@ -119,15 +131,24 @@ export class Router {
       const g = i.guildId;
       const u = i.user.id;
       if (
-        (action === "add" || action === "edit") &&
+        (action === "add" || action === "addModal" || action === "edit") &&
         (i.isChatInputCommand() || i.isButton())
       ) {
+        let schedType: ScheduleType = "daily";
+        let boss: Boss | undefined;
+        if (action === "edit") {
+          boss = this.store.boss(g, Number(arg));
+          schedType = boss.schedule_type || "daily";
+        } else if (action === "addModal") {
+          schedType = (arg as ScheduleType) || "daily";
+        } else if (i.isChatInputCommand()) {
+          const opt = i.options.getString("schedule");
+          if (opt && ["daily", "weekly", "event", "interval"].includes(opt)) {
+            schedType = opt as ScheduleType;
+          }
+        }
         await i.showModal(
-          this.views.bossModal(
-            g,
-            u,
-            action === "edit" ? this.store.boss(g, Number(arg)) : undefined,
-          ),
+          this.views.bossModal(g, u, boss, schedType),
         );
         return;
       }
@@ -161,6 +182,10 @@ export class Router {
           break;
         case "admin":
           await respond(this.views.admin(g, u));
+          break;
+        case "add":
+        case "addScheduleType":
+          await respond(this.views.addScheduleType(g, u));
           break;
         case "more":
           await respond(this.views.more(g, u));
@@ -201,13 +226,32 @@ export class Router {
         }
         case "saveBoss": {
           if (!i.isModalSubmit()) throw new UserError("Invalid form.");
+          const [bossIdStr, scheduleTypeStr = "daily"] = arg.split(":");
           const enabled = i.fields
             .getTextInputValue("enabled")
             .trim()
             .toLowerCase();
           if (!["yes", "no"].includes(enabled))
             throw new UserError("Enabled must be yes or no.");
-          const isNew = arg === "new";
+          const isNew = bossIdStr === "new";
+          const scheduleType = ([
+            "daily",
+            "weekly",
+            "event",
+            "interval",
+          ].includes(scheduleTypeStr)
+            ? scheduleTypeStr
+            : "daily") as ScheduleType;
+
+          let recurrence_days: string | undefined;
+          let event_date: string | undefined;
+          try {
+            recurrence_days = i.fields.getTextInputValue("days");
+          } catch {}
+          try {
+            event_date = i.fields.getTextInputValue("event_date");
+          } catch {}
+
           const b = this.store.saveBoss(
             g,
             {
@@ -215,13 +259,23 @@ export class Router {
               description: i.fields.getTextInputValue("description"),
               times: i.fields.getTextInputValue("times"),
               enabled: enabled === "yes",
+              schedule_type: scheduleType,
+              recurrence_days,
+              event_date,
             },
-            isNew ? undefined : Number(arg),
+            isNew ? undefined : Number(bossIdStr),
+            u,
           );
           const warning = await this.publicPanel.refreshAfterChange(g);
           if (isNew) {
             const schedList = b.times.map((t) => `- ${formatTime(t)}`).join("\n");
-            const text = `Boss: **${escapeMarkdown(b.name)}**\n\nSchedule:\n${schedList}\n\nFrequency: Daily\nTimezone: Philippine Time (UTC+8)\nStatus: ${b.enabled ? "Active" : "Disabled"}\n\nNo restart required.${warning ? `\n\n⚠️ ${warning}` : ""}`;
+            let freq = "Daily";
+            if (b.schedule_type === "weekly") {
+              freq = `Weekly (${formatWeeklyDays(b.recurrence_days)})`;
+            } else if (b.schedule_type === "event") {
+              freq = `Special Event (${b.event_date})`;
+            }
+            const text = `Boss: **${escapeMarkdown(b.name)}**\n\nSchedule:\n${schedList}\n\nFrequency: ${freq}\nTimezone: Philippine Time (UTC+8)\nStatus: ${b.enabled ? "Active" : "Disabled"}\n\nNo restart required.${warning ? `\n\n⚠️ ${warning}` : ""}`;
             await respond(
               this.views.view("✅ Boss Added Successfully", text, [
                 row(
@@ -243,7 +297,7 @@ export class Router {
           await respond(this.views.remove(g, u, Number(arg)));
           break;
         case "confirmRemove":
-          this.store.removeBoss(g, Number(arg));
+          this.store.removeBoss(g, Number(arg), u);
           await changed(
             "Boss removed. Its future scheduled alerts are cancelled.",
           );
@@ -254,6 +308,7 @@ export class Router {
             g,
             { ...b, times: b.times.join(","), enabled: !b.enabled },
             b.id,
+            u,
           );
           const warning = await this.publicPanel.refreshAfterChange(g);
           const view = this.views.boss(g, u, b.id);
@@ -279,6 +334,15 @@ export class Router {
         }
         case "confirmChannel": {
           const previous = await this.notifications.setChannel(g, arg);
+          this.store.addAuditLog(
+            g,
+            u,
+            "channel_set",
+            "channel",
+            arg,
+            previous,
+            arg,
+          );
           const warning = await this.publicPanel.refreshAfterChange(g);
           const text = `Previous Channel: ${previous ? `<#${previous}>` : "None"}\nNew Channel: <#${arg}>\nStatus: Active\nTimezone: Asia/Manila\n\nFuture notifications will use the new channel immediately.${warning ? `\n\n⚠️ ${warning}` : ""}`;
           await respond(
@@ -295,9 +359,13 @@ export class Router {
           if (!settingToggles.includes(arg as (typeof settingToggles)[number]))
             throw new UserError("Unknown setting.");
           const key = arg as (typeof settingToggles)[number];
-          this.store.updateSettings(g, {
-            [key]: this.store.settings(g)[key] ? 0 : 1,
-          });
+          this.store.updateSettings(
+            g,
+            {
+              [key]: this.store.settings(g)[key] ? 0 : 1,
+            },
+            u,
+          );
           await respond(this.views.settings(g, u));
           break;
         }
@@ -313,10 +381,14 @@ export class Router {
           const daily = parseTimes(i.fields.getTextInputValue("daily"));
           if (daily.length !== 1)
             throw new UserError("Enter one daily schedule time.");
-          this.store.updateSettings(g, {
-            reminder_minutes: JSON.stringify(minutes),
-            daily_time: daily[0],
-          });
+          this.store.updateSettings(
+            g,
+            {
+              reminder_minutes: JSON.stringify(minutes),
+              daily_time: daily[0],
+            },
+            u,
+          );
           await respond(this.views.settings(g, u));
           break;
         }
@@ -332,6 +404,15 @@ export class Router {
           await this.subscriptions.configure(
             i.guild,
             Number(arg),
+            i.values[0]!,
+          );
+          this.store.addAuditLog(
+            g,
+            u,
+            "role_set",
+            Number(arg) === 0 ? "global_role" : "boss_role",
+            String(arg),
+            null,
             i.values[0]!,
           );
           await respond(this.views.roles(g, u, Number(arg)));
@@ -363,6 +444,15 @@ export class Router {
           });
           try {
             await this.subscriptions.configure(i.guild, scope, role.id);
+            this.store.addAuditLog(
+              g,
+              u,
+              "role_set",
+              scope === 0 ? "global_role" : "boss_role",
+              String(scope),
+              null,
+              role.id,
+            );
           } catch (error) {
             // Keep the role visible for hierarchy repair instead of secretly creating more on every attempt.
             throw new UserError(
@@ -403,16 +493,37 @@ export class Router {
           await respond(this.views.resetPanel(g, u));
           break;
         case "confirmResetPanel":
-          this.store.updateSettings(g, {
-            panel_channel_id: null,
-            panel_message_id: null,
-          });
+          this.store.updateSettings(
+            g,
+            {
+              panel_channel_id: null,
+              panel_message_id: null,
+            },
+            u,
+          );
+          this.store.addAuditLog(
+            g,
+            u,
+            "panel_reset",
+            "panel",
+            null,
+            "Panel reference cleared",
+          );
           await success(
             "Saved panel reference cleared. Delete any old public message before running /boss publish.",
           );
           break;
         case "publish": {
           const url = await this.publicPanel.refresh(g, true);
+          this.store.addAuditLog(
+            g,
+            u,
+            "schedule_publish",
+            "panel",
+            null,
+            null,
+            url,
+          );
           await success(`Public schedule ready: ${url}`);
           break;
         }
@@ -424,8 +535,50 @@ export class Router {
         case "status":
           await respond(this.views.status(g, u));
           break;
+        case "deliveryLogs":
+          await respond(this.views.deliveryLogs(g, u, Number(arg) || 0));
+          break;
+        case "audit":
+        case "auditFilter":
+        case "auditPage": {
+          let filter = "all";
+          let page = 0;
+          if (action === "auditFilter" && i.isStringSelectMenu()) {
+            filter = i.values[0] || "all";
+          } else if (arg) {
+            const parts = arg.split(":");
+            filter = parts[0] || "all";
+            page = Number(parts[1]) || 0;
+          }
+          await respond(this.views.audit(g, u, filter, page));
+          break;
+        }
+        case "defeated": {
+          const s = this.store.settings(g);
+          if (!s.interval_respawn_tracking_enabled) {
+            await respond(
+              this.views.view(
+                "⚠️ FEATURE NOT AVAILABLE",
+                "Boss kill and interval respawn tracking is currently disabled on this server. Contact your server administrator if this feature is needed in the future.",
+                [row(this.views.back(g, u, "main"))],
+                0xf59e0b,
+              ),
+            );
+            break;
+          }
+          break;
+        }
         case "backup": {
           const filePath = await backup(this.store);
+          this.store.addAuditLog(
+            g,
+            u,
+            "backup_create",
+            "system",
+            null,
+            null,
+            filePath,
+          );
           await success(
             `**Verified database snapshot created:**\n\`${filePath}\`\n\nTo download, log into the Wispbyte panel, open **Files**, and navigate to \`data/backups/\`. Download the \`.db\` file safely to your computer.\n\n*Note: Backups are never sent to Discord channels to protect server security and avoid file leaks.*`,
           );

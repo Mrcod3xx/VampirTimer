@@ -81,7 +81,7 @@ describe("SQLite boss management", () => {
     expect(s.settings("a").notification_channel_id).toBe("123456789012345678");
     expect(() => s.updateSettings("a", { reminder_minutes: "[-1]" })).toThrow();
     expect(s.db.prepare("SELECT * FROM schema_migrations").all()).toHaveLength(
-      1,
+      2,
     );
     expect(s.db.pragma("foreign_keys", { simple: true })).toBe(1);
   });

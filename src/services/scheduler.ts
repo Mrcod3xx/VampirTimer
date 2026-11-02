@@ -5,7 +5,7 @@ import {
   type Event,
   type Settings,
 } from "../database/store.js";
-import { atTime, ZONE } from "../utils/time.js";
+import { atTime, isBossDueOnDay, ZONE } from "../utils/time.js";
 import { errorCode, log } from "../utils/logger.js";
 
 export function stages(s: Settings): number[] {
@@ -32,9 +32,16 @@ export function validEvent(e: Event, s: Settings, bosses: Boss[]) {
   if (e.minutes === -1)
     return Boolean(s.daily_enabled && time === s.daily_time);
   const boss = bosses.find((b) => b.id === e.boss_id);
-  return Boolean(
-    boss?.enabled && boss.times.includes(time) && stages(s).includes(e.minutes),
-  );
+  if (
+    !boss?.enabled ||
+    !boss.times.includes(time) ||
+    !stages(s).includes(e.minutes)
+  ) {
+    return false;
+  }
+  const eventDay = DateTime.fromMillis(e.spawn_at, { zone: ZONE });
+  const intervalEnabled = Boolean(s.interval_respawn_tracking_enabled);
+  return isBossDueOnDay(boss, eventDay, intervalEnabled);
 }
 export interface Delivery {
   prepare(guildId: string): Promise<string>;
@@ -123,8 +130,10 @@ export class Scheduler {
           );
         };
         if (s.notifications_enabled) {
+          const intervalEnabled = Boolean(s.interval_respawn_tracking_enabled);
           for (let day = first; day <= end; day = day.plus({ days: 1 })) {
             for (const boss of bosses.filter((b) => b.enabled)) {
+              if (!isBossDueOnDay(boss, day, intervalEnabled)) continue;
               for (const time of boss.times)
                 for (const stage of stages(s))
                   add(boss.id, atTime(day, time).toMillis(), stage);
@@ -160,9 +169,7 @@ export class Scheduler {
       "UPDATE notification_logs SET status='missed',error_message='Lateness window expired' WHERE status='pending' AND scheduled_at<?",
     ).run(now - this.lateness);
     if (now - this.cleanedAt > 3_600_000) {
-      db.prepare(
-        "DELETE FROM notification_logs WHERE scheduled_at<? AND status NOT IN ('pending','sending')",
-      ).run(now - this.historyDays * 86_400_000);
+      this.store.cleanupLogs(now);
       db.pragma("wal_checkpoint(PASSIVE)");
       this.cleanedAt = now;
       log("info", "Scheduler health", {

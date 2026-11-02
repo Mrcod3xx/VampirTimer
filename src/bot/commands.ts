@@ -104,5 +104,34 @@ export const commands = [
         .setName("backup")
         .setDescription("Admin: create a verified database snapshot"),
     )
+    .addSubcommand((s) =>
+      s
+        .setName("audit")
+        .setDescription("Admin: inspect audit logs of tracker changes")
+        .addStringOption((o) =>
+          o
+            .setName("filter")
+            .setDescription("Category filter")
+            .setRequired(false)
+            .addChoices(
+              { name: "All Changes", value: "all" },
+              { name: "Boss Changes", value: "boss" },
+              { name: "Channel Changes", value: "channel" },
+              { name: "Settings & Roles", value: "settings" },
+            ),
+        ),
+    )
+    .addSubcommand((s) =>
+      s
+        .setName("defeated")
+        .setDescription("Report a boss as defeated (interval respawn)")
+        .addIntegerOption((o) =>
+          o
+            .setName("boss")
+            .setDescription("Select defeated boss")
+            .setRequired(true)
+            .setAutocomplete(true),
+        ),
+    )
     .addSubcommand((s) => s.setName("help").setDescription("Command guide")),
 ];

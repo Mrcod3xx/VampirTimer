@@ -48,6 +48,42 @@ CREATE INDEX boss_guild ON bosses(guild_id,id);
 CREATE INDEX subscription_role ON member_subscriptions(guild_id,role_id);
 CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `,
+  String.raw`
+ALTER TABLE bosses ADD COLUMN schedule_type TEXT NOT NULL DEFAULT 'daily' CHECK(schedule_type IN ('daily','weekly','event','interval'));
+ALTER TABLE bosses ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Asia/Manila';
+ALTER TABLE bosses ADD COLUMN recurrence_days TEXT;
+ALTER TABLE bosses ADD COLUMN event_date TEXT;
+ALTER TABLE bosses ADD COLUMN respawn_interval_minutes INTEGER;
+ALTER TABLE bosses ADD COLUMN respawn_trigger_type TEXT DEFAULT 'defeat';
+
+CREATE TABLE audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL REFERENCES guild_settings(guild_id),
+  user_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT,
+  previous_value TEXT,
+  new_value TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX audit_guild_time ON audit_logs(guild_id, created_at DESC);
+CREATE INDEX audit_action ON audit_logs(guild_id, action_type);
+
+CREATE TABLE boss_kill_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL REFERENCES guild_settings(guild_id),
+  boss_id INTEGER NOT NULL REFERENCES bosses(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  report_type TEXT NOT NULL CHECK(report_type IN ('defeat', 'alive', 'correction')),
+  reported_at INTEGER NOT NULL,
+  submitted_at INTEGER NOT NULL,
+  notes TEXT
+);
+CREATE INDEX kill_reports_boss ON boss_kill_reports(guild_id, boss_id, reported_at DESC);
+
+ALTER TABLE guild_settings ADD COLUMN interval_respawn_tracking_enabled INTEGER NOT NULL DEFAULT 0;
+`,
 ];
 
 export function migrate(db: Database.Database) {

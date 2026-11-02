@@ -2,8 +2,14 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { DateTime } from "luxon";
 import { migrate } from "./migrations.js";
-import { parseTimes } from "../utils/time.js";
+import {
+  normalizeWeekdays,
+  parseEventDate,
+  parseTimes,
+  ZONE,
+} from "../utils/time.js";
 import { UserError } from "../utils/logger.js";
 
 export const DEFAULT_BOSSES: Array<{
@@ -42,9 +48,13 @@ export interface Settings {
   panel_channel_id: string | null;
   panel_message_id: string | null;
   last_reconciled: number | null;
+  interval_respawn_tracking_enabled: number;
   created_at: number;
   updated_at: number;
 }
+
+export type ScheduleType = "daily" | "weekly" | "event" | "interval";
+
 export interface Boss {
   id: number;
   guild_id: string;
@@ -53,7 +63,37 @@ export interface Boss {
   enabled: number;
   times: string[];
   role_id: string | null;
+  schedule_type: ScheduleType;
+  timezone: string;
+  recurrence_days: string | null;
+  event_date: string | null;
+  respawn_interval_minutes: number | null;
+  respawn_trigger_type: "defeat" | "spawn" | null;
 }
+
+export interface AuditLog {
+  id: number;
+  guild_id: string;
+  user_id: string;
+  action_type: string;
+  target_type: string;
+  target_id: string | null;
+  previous_value: string | null;
+  new_value: string | null;
+  created_at: number;
+}
+
+export interface BossKillReport {
+  id: number;
+  guild_id: string;
+  boss_id: number;
+  user_id: string;
+  report_type: "defeat" | "alive" | "correction";
+  reported_at: number;
+  submitted_at: number;
+  notes: string | null;
+}
+
 export interface Event {
   event_key: string;
   guild_id: string;
@@ -65,6 +105,7 @@ export interface Event {
   attempts: number;
   retry_at: number;
 }
+
 const bossInput = z.object({
   name: z
     .string()
@@ -75,7 +116,27 @@ const bossInput = z.object({
   description: z.string().trim().max(800),
   enabled: z.boolean(),
   times: z.string(),
+  schedule_type: z
+    .enum(["daily", "weekly", "event", "interval"])
+    .optional()
+    .default("daily"),
+  timezone: z.string().optional().default("Asia/Manila"),
+  recurrence_days: z.string().nullable().optional(),
+  event_date: z.string().nullable().optional(),
+  respawn_interval_minutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(10080)
+    .nullable()
+    .optional(),
+  respawn_trigger_type: z
+    .enum(["defeat", "spawn"])
+    .nullable()
+    .optional()
+    .default("defeat"),
 });
+
 export const settingToggles = [
   "notifications_enabled",
   "reminder_30_enabled",
@@ -84,7 +145,9 @@ export const settingToggles = [
   "combine_notifications",
   "role_mentions_enabled",
   "daily_enabled",
+  "interval_respawn_tracking_enabled",
 ] as const;
+
 const settingsPatch = z
   .object({
     notification_channel_id: z
@@ -202,7 +265,11 @@ export class Store {
       throw new UserError("Guild is not initialized. Try /panel again.");
     return row;
   }
-  updateSettings(guildId: string, patch: Partial<Settings>) {
+  updateSettings(
+    guildId: string,
+    patch: Partial<Settings>,
+    userId = "system",
+  ) {
     const result = settingsPatch.safeParse(patch);
     if (!result.success)
       throw new UserError(
@@ -215,6 +282,15 @@ export class Store {
         `UPDATE guild_settings SET ${entries.map(([k]) => `${k}=?`).join(",")},updated_at=? WHERE guild_id=?`,
       )
       .run(...entries.map(([, v]) => v), Date.now(), guildId);
+    this.addAuditLog(
+      guildId,
+      userId,
+      "settings_update",
+      "settings",
+      undefined,
+      undefined,
+      JSON.stringify(result.data),
+    );
     this.revision++;
   }
   bosses(guildId: string): Boss[] {
@@ -228,25 +304,33 @@ export class Store {
     );
     return rows.map((b) => ({
       ...b,
+      schedule_type: b.schedule_type || "daily",
+      timezone: b.timezone || "Asia/Manila",
       times: (times.all(b.id) as { spawn_time: string }[]).map(
         (t) => t.spawn_time,
       ),
     }));
   }
-  boss(guildId: string, id: number) {
+  boss(guildId: string, id: number): Boss {
     const boss = this.bosses(guildId).find((b) => b.id === id);
     if (!boss)
       throw new UserError("This boss no longer exists. Reopen the panel.");
     return boss;
   }
-  saveBoss(guildId: string, input: z.input<typeof bossInput>, id?: number) {
+  saveBoss(
+    guildId: string,
+    input: z.input<typeof bossInput>,
+    id?: number,
+    userId = "system",
+  ): Boss {
     const result = bossInput.safeParse(input);
     if (!result.success)
       throw new UserError(result.error.issues.map((i) => i.message).join("; "));
     const b = result.data;
     const times = parseTimes(b.times);
     const key = b.name.normalize("NFKC").toLowerCase();
-    if (id !== undefined) this.boss(guildId, id);
+    let oldBoss: Boss | undefined;
+    if (id !== undefined) oldBoss = this.boss(guildId, id);
     if (id === undefined && this.bosses(guildId).length >= 100)
       throw new UserError(
         "Limit: 100 bosses per guild. Remove an unused boss first.",
@@ -257,14 +341,35 @@ export class Store {
       )
       .get(guildId, key, id ?? -1);
     if (duplicate) throw new UserError("A boss with that name already exists.");
+
+    let recurrence_days: string | null = null;
+    let event_date: string | null = null;
+    if (b.schedule_type === "weekly") {
+      const days = normalizeWeekdays(b.recurrence_days);
+      if (!days.length)
+        throw new UserError(
+          "Weekly schedule requires at least one weekday (e.g. Mon, Wed, Fri).",
+        );
+      recurrence_days = JSON.stringify(days);
+    } else if (b.schedule_type === "event") {
+      if (!b.event_date)
+        throw new UserError(
+          "Special Event schedule requires an event date (YYYY-MM-DD).",
+        );
+      event_date = parseEventDate(b.event_date);
+    }
+
     const savedId = this.db.transaction(() => {
       const now = Date.now();
       let bossId = id;
-      if (bossId === undefined)
+      if (bossId === undefined) {
         bossId = Number(
           this.db
             .prepare(
-              "INSERT INTO bosses(guild_id,name,name_key,description,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+              `INSERT INTO bosses(
+                guild_id,name,name_key,description,enabled,created_at,updated_at,
+                schedule_type,timezone,recurrence_days,event_date,respawn_interval_minutes,respawn_trigger_type
+              ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
             .run(
               guildId,
@@ -274,12 +379,30 @@ export class Store {
               Number(b.enabled),
               now,
               now,
+              b.schedule_type,
+              b.timezone,
+              recurrence_days,
+              event_date,
+              b.respawn_interval_minutes ?? null,
+              b.respawn_trigger_type,
             ).lastInsertRowid,
         );
-      else
+        this.addAuditLog(
+          guildId,
+          userId,
+          "boss_add",
+          "boss",
+          String(bossId),
+          undefined,
+          b.name,
+        );
+      } else {
         this.db
           .prepare(
-            "UPDATE bosses SET name=?,name_key=?,description=?,enabled=?,updated_at=? WHERE guild_id=? AND id=?",
+            `UPDATE bosses SET
+              name=?,name_key=?,description=?,enabled=?,updated_at=?,
+              schedule_type=?,timezone=?,recurrence_days=?,event_date=?,respawn_interval_minutes=?,respawn_trigger_type=?
+            WHERE guild_id=? AND id=?`,
           )
           .run(
             b.name,
@@ -287,9 +410,25 @@ export class Store {
             b.description,
             Number(b.enabled),
             now,
+            b.schedule_type,
+            b.timezone,
+            recurrence_days,
+            event_date,
+            b.respawn_interval_minutes ?? null,
+            b.respawn_trigger_type,
             guildId,
             bossId,
           );
+        this.addAuditLog(
+          guildId,
+          userId,
+          "boss_edit",
+          "boss",
+          String(bossId),
+          oldBoss?.name,
+          b.name,
+        );
+      }
       this.db
         .prepare("DELETE FROM boss_spawn_times WHERE boss_id=?")
         .run(bossId);
@@ -302,8 +441,8 @@ export class Store {
     this.revision++;
     return this.boss(guildId, savedId);
   }
-  removeBoss(guildId: string, id: number) {
-    this.boss(guildId, id);
+  removeBoss(guildId: string, id: number, userId = "system") {
+    const boss = this.boss(guildId, id);
     this.db.transaction(() => {
       this.db
         .prepare("DELETE FROM bosses WHERE guild_id=? AND id=?")
@@ -313,8 +452,164 @@ export class Store {
           "UPDATE notification_logs SET status='cancelled' WHERE guild_id=? AND boss_id=? AND status='pending'",
         )
         .run(guildId, id);
-      // Keep role receipts after deletion so members can still remove old opt-in roles.
+      this.addAuditLog(
+        guildId,
+        userId,
+        "boss_remove",
+        "boss",
+        String(id),
+        boss.name,
+        undefined,
+      );
     })();
     this.revision++;
+  }
+  addAuditLog(
+    guildId: string,
+    userId: string,
+    actionType: string,
+    targetType: string,
+    targetId?: string | null,
+    previousValue?: string | null,
+    newValue?: string | null,
+    createdAt = Date.now(),
+  ) {
+    this.db
+      .prepare(
+        `INSERT INTO audit_logs (
+          guild_id, user_id, action_type, target_type, target_id, previous_value, new_value, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        guildId,
+        userId,
+        actionType,
+        targetType,
+        targetId ?? null,
+        previousValue ?? null,
+        newValue ?? null,
+        createdAt,
+      );
+  }
+  auditLogs(
+    guildId: string,
+    filter?: string,
+    limit = 20,
+    offset = 0,
+  ): AuditLog[] {
+    let sql = "SELECT * FROM audit_logs WHERE guild_id=?";
+    const params: (string | number)[] = [guildId];
+
+    if (filter === "boss") {
+      sql += " AND action_type LIKE 'boss_%'";
+    } else if (filter === "channel") {
+      sql += " AND action_type = 'channel_set'";
+    } else if (filter === "settings") {
+      sql +=
+        " AND (action_type = 'settings_update' OR action_type = 'role_set' OR action_type LIKE 'panel_%' OR action_type LIKE 'schedule_%')";
+    }
+
+    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+
+    return this.db.prepare(sql).all(...params) as AuditLog[];
+  }
+  auditLogCount(guildId: string, filter?: string): number {
+    let sql = "SELECT COUNT(*) AS count FROM audit_logs WHERE guild_id=?";
+    const params: string[] = [guildId];
+
+    if (filter === "boss") {
+      sql += " AND action_type LIKE 'boss_%'";
+    } else if (filter === "channel") {
+      sql += " AND action_type = 'channel_set'";
+    } else if (filter === "settings") {
+      sql +=
+        " AND (action_type = 'settings_update' OR action_type = 'role_set' OR action_type LIKE 'panel_%' OR action_type LIKE 'schedule_%')";
+    }
+
+    return (this.db.prepare(sql).get(...params) as { count: number }).count;
+  }
+  recordKillReport(
+    guildId: string,
+    bossId: number,
+    userId: string,
+    reportType: "defeat" | "alive" | "correction",
+    reportedAt: number,
+    notes?: string,
+  ): BossKillReport {
+    this.boss(guildId, bossId);
+    const now = Date.now();
+    const id = Number(
+      this.db
+        .prepare(
+          `INSERT INTO boss_kill_reports (
+            guild_id, boss_id, user_id, report_type, reported_at, submitted_at, notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          guildId,
+          bossId,
+          userId,
+          reportType,
+          reportedAt,
+          now,
+          notes ?? null,
+        ).lastInsertRowid,
+    );
+    this.addAuditLog(
+      guildId,
+      userId,
+      `report_${reportType}`,
+      "boss",
+      String(bossId),
+      undefined,
+      `Reported at ${DateTime.fromMillis(reportedAt, { zone: ZONE }).toISO()}`,
+    );
+    return {
+      id,
+      guild_id: guildId,
+      boss_id: bossId,
+      user_id: userId,
+      report_type: reportType,
+      reported_at: reportedAt,
+      submitted_at: now,
+      notes: notes ?? null,
+    };
+  }
+  latestKillReport(guildId: string, bossId: number): BossKillReport | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM boss_kill_reports WHERE guild_id=? AND boss_id=? ORDER BY reported_at DESC, id DESC LIMIT 1",
+      )
+      .get(guildId, bossId) as BossKillReport | undefined;
+  }
+  killReportHistory(
+    guildId: string,
+    bossId: number,
+    limit = 20,
+  ): BossKillReport[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM boss_kill_reports WHERE guild_id=? AND boss_id=? ORDER BY reported_at DESC, id DESC LIMIT ?",
+      )
+      .all(guildId, bossId, limit) as BossKillReport[];
+  }
+  cleanupLogs(now = Date.now()) {
+    const auditCutoff = now - 90 * 86_400_000;
+    const deliveryCutoff = now - 30 * 86_400_000;
+    const errorCutoff = now - 14 * 86_400_000;
+    this.db
+      .prepare("DELETE FROM audit_logs WHERE created_at < ?")
+      .run(auditCutoff);
+    this.db
+      .prepare(
+        "DELETE FROM notification_logs WHERE scheduled_at < ? AND status NOT IN ('pending', 'sending')",
+      )
+      .run(deliveryCutoff);
+    this.db
+      .prepare(
+        "DELETE FROM notification_logs WHERE scheduled_at < ? AND error_message IS NOT NULL AND status NOT IN ('pending', 'sending')",
+      )
+      .run(errorCutoff);
   }
 }

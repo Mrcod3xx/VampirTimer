@@ -37,7 +37,7 @@ it("persists settings, roles, subscriptions and schema across reopen", () => {
   ).toHaveLength(1);
   expect(
     store.db.prepare("SELECT * FROM schema_migrations").all(),
-  ).toHaveLength(1);
+  ).toHaveLength(2);
 });
 it("creates verified WAL-safe snapshots, keeps three, and restores them", async () => {
   const first = await backup(store);
