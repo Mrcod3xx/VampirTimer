@@ -65,16 +65,28 @@ async function main() {
           const guild = client.guilds.cache.get(config.DISCORD_GUILD_ID);
           if (guild) {
             await guild.commands.set(commands);
-            log("info", "Synced slash commands to guild", {
+            log("info", "Synced slash commands to target guild", {
               guild: config.DISCORD_GUILD_ID,
               count: commands.length,
             });
           }
-        } else if (client.application) {
-          await client.application.commands.set(commands);
-          log("info", "Synced slash commands globally", {
-            count: commands.length,
-          });
+        } else {
+          // Sync directly to all joined guilds so commands appear INSTANTLY without the 1-hour global Discord cache delay
+          for (const guild of client.guilds.cache.values()) {
+            await guild.commands.set(commands).catch((err) => {
+              log("warn", "Guild command sync failed", {
+                guild: guild.id,
+                code: errorCode(err),
+              });
+            });
+            log("info", "Synced slash commands to guild", {
+              guild: guild.id,
+              count: commands.length,
+            });
+          }
+          if (client.application) {
+            await client.application.commands.set(commands).catch(() => {});
+          }
         }
       } catch (err) {
         log(
@@ -97,6 +109,7 @@ async function main() {
   client.on(Events.GuildCreate, (guild) => {
     try {
       store.initGuild(guild.id);
+      void guild.commands.set(commands).catch(() => {});
       void router.publicPanel.refresh(guild.id).catch(() => {});
     } catch (error) {
       log("error", "Guild initialization failed", { code: errorCode(error) });
