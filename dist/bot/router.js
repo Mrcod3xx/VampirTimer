@@ -1,4 +1,4 @@
-import { ButtonBuilder, ButtonStyle, ChannelType, escapeMarkdown, MessageFlags, PermissionFlagsBits, } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, ComponentType, escapeMarkdown, MessageFlags, PermissionFlagsBits, } from "discord.js";
 import { settingToggles, } from "../database/store.js";
 import { row } from "../ui/views.js";
 import { Subscriptions } from "../services/subscriptions.js";
@@ -505,8 +505,68 @@ export class Router {
                         throw new UserError("Please select a boss to report as defeated. Use /boss defeated [boss].");
                     const b = this.store.boss(g, bossId);
                     const nowMs = Date.now();
-                    this.store.recordKillReport(g, b.id, u, "defeat", nowMs);
+                    try {
+                        this.store.recordKillReport(g, b.id, u, "defeat", nowMs);
+                    }
+                    catch (err) {
+                        if (i.isButton() &&
+                            i.message &&
+                            typeof i.message.edit === "function" &&
+                            Array.isArray(i.message.components)) {
+                            try {
+                                const disabledRows = i.message.components.map((cRow) => {
+                                    const newRow = new ActionRowBuilder();
+                                    for (const comp of cRow.components) {
+                                        if (comp.type === ComponentType.Button) {
+                                            const btn = ButtonBuilder.from(comp);
+                                            if (comp.customId === i.customId) {
+                                                btn
+                                                    .setDisabled(true)
+                                                    .setLabel("⏱️ Awaiting Respawn")
+                                                    .setStyle(ButtonStyle.Secondary);
+                                            }
+                                            newRow.addComponents(btn);
+                                        }
+                                    }
+                                    return newRow;
+                                });
+                                await i.message.edit({ components: disabledRows });
+                            }
+                            catch {
+                                // Ignore if message edit fails
+                            }
+                        }
+                        throw err;
+                    }
                     await this.publicPanel.refreshAfterChange(g);
+                    // Disable button on the original message to prevent double-clicking
+                    if (i.isButton() &&
+                        i.message &&
+                        typeof i.message.edit === "function" &&
+                        Array.isArray(i.message.components)) {
+                        try {
+                            const disabledRows = i.message.components.map((cRow) => {
+                                const newRow = new ActionRowBuilder();
+                                for (const comp of cRow.components) {
+                                    if (comp.type === ComponentType.Button) {
+                                        const btn = ButtonBuilder.from(comp);
+                                        if (comp.customId === i.customId) {
+                                            btn
+                                                .setDisabled(true)
+                                                .setLabel("⚔️ Defeated")
+                                                .setStyle(ButtonStyle.Secondary);
+                                        }
+                                        newRow.addComponents(btn);
+                                    }
+                                }
+                                return newRow;
+                            });
+                            await i.message.edit({ components: disabledRows });
+                        }
+                        catch {
+                            // Ignore if message edit fails
+                        }
+                    }
                     const nowSec = Math.floor(nowMs / 1000);
                     const lines = [
                         `> 👹 **Boss:** **${escapeMarkdown(b.name)}**`,
@@ -516,7 +576,11 @@ export class Router {
                     if (b.schedule_type === "interval" && b.respawn_interval_minutes) {
                         const respawnMs = nowMs + b.respawn_interval_minutes * 60 * 1000;
                         const respawnSec = Math.floor(respawnMs / 1000);
-                        lines.push(`⏱️ **Estimated Respawn**`, `> <t:${respawnSec}:t> (<t:${respawnSec}:R>)`, `*Based on ${Math.round(b.respawn_interval_minutes / 60)}h respawn duration.*`);
+                        const h = b.respawn_interval_minutes / 60;
+                        const durationStr = Number.isInteger(h)
+                            ? `${h}h`
+                            : `${b.respawn_interval_minutes}m`;
+                        lines.push(`⏱️ **Estimated Respawn**`, `> <t:${respawnSec}:t> (<t:${respawnSec}:R>)`, `*Based on ${durationStr} respawn duration.*`);
                     }
                     else {
                         lines.push(`*This boss follows a fixed schedule (${b.schedule_type || "daily"}). Kill logged to history.*`);

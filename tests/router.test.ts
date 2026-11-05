@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   MessageFlags,
   PermissionsBitField,
   type Interaction,
@@ -279,16 +282,28 @@ it("allows non-admin members to click the public 'Report Defeated' button on spa
   const components = new Components(t.store);
   const publicCustomId = components.id(G, "0", "defeated", String(b.id), true);
 
+  const editMessageMock = vi.fn().mockResolvedValue(undefined);
+  const messageButton = new ButtonBuilder()
+    .setCustomId(publicCustomId)
+    .setLabel("⚔️ Report Defeated")
+    .setStyle(ButtonStyle.Success);
+  const messageRow = new ActionRowBuilder<ButtonBuilder>().addComponents(messageButton);
+
   // Interaction coming from a non-admin member clicking the button on a public message
   const nonAdminInteraction = t.interaction("defeated", String(b.id), "button", {
     customId: publicCustomId,
     memberPermissions: new PermissionsBitField(), // No administrator permissions
-    message: { flags: { has: () => false } }, // Non-ephemeral (public channel message)
+    message: {
+      flags: { has: () => false },
+      edit: editMessageMock,
+      components: [messageRow],
+    },
   });
 
   await t.router.handle(nonAdminInteraction);
   expect(nonAdminInteraction.deferReply).toHaveBeenCalledWith();
   expect(t.store.latestKillReport(G, b.id)?.report_type).toBe("defeat");
+  expect(editMessageMock).toHaveBeenCalledTimes(1);
   const editReplyPayload = nonAdminInteraction.editReply.mock.calls[0]![0];
   expect(editReplyPayload.embeds[0].data.title).toBe("⚔️ BOSS DEFEAT RECORDED");
   expect(editReplyPayload.components).toHaveLength(1);
@@ -296,4 +311,18 @@ it("allows non-admin members to click the public 'Report Defeated' button on spa
   expect(buttons).toHaveLength(2);
   expect(buttons[0].data.label).toBe("View Schedule");
   expect(buttons[1].data.label).toBe("Next Boss");
+
+  // Clicking again while the boss has not spawned yet throws error and disables button
+  const secondEditMock = vi.fn().mockResolvedValue(undefined);
+  const secondInteraction = t.interaction("defeated", String(b.id), "button", {
+    customId: publicCustomId,
+    memberPermissions: new PermissionsBitField(),
+    message: {
+      flags: { has: () => false },
+      edit: secondEditMock,
+      components: [messageRow],
+    },
+  });
+  await t.router.handle(secondInteraction);
+  expect(secondInteraction.editReply.mock.calls[0]![0].content).toContain("already reported");
 });

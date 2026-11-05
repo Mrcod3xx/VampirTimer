@@ -1,7 +1,9 @@
 import {
+  ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  ComponentType,
   escapeMarkdown,
   MessageFlags,
   PermissionFlagsBits,
@@ -639,8 +641,76 @@ export class Router {
             );
           const b = this.store.boss(g, bossId);
           const nowMs = Date.now();
-          this.store.recordKillReport(g, b.id, u, "defeat", nowMs);
+
+          try {
+            this.store.recordKillReport(g, b.id, u, "defeat", nowMs);
+          } catch (err) {
+            if (
+              i.isButton() &&
+              i.message &&
+              typeof (i.message as any).edit === "function" &&
+              Array.isArray((i.message as any).components)
+            ) {
+              try {
+                const disabledRows = (i.message as any).components.map(
+                  (cRow: any) => {
+                    const newRow = new ActionRowBuilder<ButtonBuilder>();
+                    for (const comp of cRow.components) {
+                      if (comp.type === ComponentType.Button) {
+                        const btn = ButtonBuilder.from(comp);
+                        if (comp.customId === i.customId) {
+                          btn
+                            .setDisabled(true)
+                            .setLabel("⏱️ Awaiting Respawn")
+                            .setStyle(ButtonStyle.Secondary);
+                        }
+                        newRow.addComponents(btn);
+                      }
+                    }
+                    return newRow;
+                  },
+                );
+                await (i.message as any).edit({ components: disabledRows });
+              } catch {
+                // Ignore if message edit fails
+              }
+            }
+            throw err;
+          }
+
           await this.publicPanel.refreshAfterChange(g);
+
+          // Disable button on the original message to prevent double-clicking
+          if (
+            i.isButton() &&
+            i.message &&
+            typeof (i.message as any).edit === "function" &&
+            Array.isArray((i.message as any).components)
+          ) {
+            try {
+              const disabledRows = (i.message as any).components.map(
+                (cRow: any) => {
+                  const newRow = new ActionRowBuilder<ButtonBuilder>();
+                  for (const comp of cRow.components) {
+                    if (comp.type === ComponentType.Button) {
+                      const btn = ButtonBuilder.from(comp);
+                      if (comp.customId === i.customId) {
+                        btn
+                          .setDisabled(true)
+                          .setLabel("⚔️ Defeated")
+                          .setStyle(ButtonStyle.Secondary);
+                      }
+                      newRow.addComponents(btn);
+                    }
+                  }
+                  return newRow;
+                },
+              );
+              await (i.message as any).edit({ components: disabledRows });
+            } catch {
+              // Ignore if message edit fails
+            }
+          }
 
           const nowSec = Math.floor(nowMs / 1000);
           const lines: string[] = [
@@ -652,10 +722,14 @@ export class Router {
           if (b.schedule_type === "interval" && b.respawn_interval_minutes) {
             const respawnMs = nowMs + b.respawn_interval_minutes * 60 * 1000;
             const respawnSec = Math.floor(respawnMs / 1000);
+            const h = b.respawn_interval_minutes / 60;
+            const durationStr = Number.isInteger(h)
+              ? `${h}h`
+              : `${b.respawn_interval_minutes}m`;
             lines.push(
               `⏱️ **Estimated Respawn**`,
               `> <t:${respawnSec}:t> (<t:${respawnSec}:R>)`,
-              `*Based on ${Math.round(b.respawn_interval_minutes / 60)}h respawn duration.*`,
+              `*Based on ${durationStr} respawn duration.*`,
             );
           } else {
             lines.push(

@@ -89,6 +89,9 @@ it("replaces unsent estimates after a new report, supports alive and undo, rejec
   expect(() =>
     t.store.recordKillReport("g", t.boss.id, "v", "defeat", base + 1000),
   ).toThrow("already reported");
+  expect(() =>
+    t.store.recordKillReport("g", t.boss.id, "v", "defeat", base + 15 * 60_000),
+  ).toThrow("has not spawned yet");
   t.store.recordKillReport("g", t.boss.id, "u", "correction", base + 600000);
   t.set(30);
   await t.scheduler.tick();

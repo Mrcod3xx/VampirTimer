@@ -367,12 +367,19 @@ export class Store {
         return this.db.prepare(sql).get(...params).count;
     }
     recordKillReport(guildId, bossId, userId, reportType, reportedAt, notes) {
-        this.boss(guildId, bossId);
+        const boss = this.boss(guildId, bossId);
         const latest = this.latestKillReport(guildId, bossId);
-        if (reportType === "defeat" &&
-            latest?.report_type === "defeat" &&
-            Math.abs(reportedAt - latest.reported_at) < 60_000)
-            throw new UserError("A defeat was already reported in the last minute. Use the existing timer.");
+        if (reportType === "defeat" && latest?.report_type === "defeat") {
+            if (Math.abs(reportedAt - latest.reported_at) < 60_000)
+                throw new UserError("A defeat was already reported in the last minute. Use the existing timer.");
+            if (boss.schedule_type === "interval" && boss.respawn_interval_minutes) {
+                const estimatedRespawnAt = latest.reported_at + boss.respawn_interval_minutes * 60_000;
+                if (reportedAt < estimatedRespawnAt) {
+                    const respawnSec = Math.floor(estimatedRespawnAt / 1000);
+                    throw new UserError(`Cannot report defeat: **${boss.name}** has not spawned yet! Estimated respawn is <t:${respawnSec}:t> (<t:${respawnSec}:R>). If the boss was spotted alive early, an administrator can confirm it with /boss alive.`);
+                }
+            }
+        }
         const now = Date.now();
         const id = Number(this.db
             .prepare(`INSERT INTO boss_kill_reports (
