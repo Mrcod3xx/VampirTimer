@@ -287,8 +287,13 @@ it("allows non-admin members to click the public 'Report Defeated' button on spa
   });
 
   await t.router.handle(nonAdminInteraction);
-  expect(nonAdminInteraction.deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+  expect(nonAdminInteraction.deferReply).toHaveBeenCalledWith();
   expect(t.store.latestKillReport(G, b.id)?.report_type).toBe("defeat");
   const editReplyPayload = nonAdminInteraction.editReply.mock.calls[0]![0];
   expect(editReplyPayload.embeds[0].data.title).toBe("⚔️ BOSS DEFEAT RECORDED");
+  expect(editReplyPayload.components).toHaveLength(1);
+  const buttons = editReplyPayload.components[0].components;
+  expect(buttons).toHaveLength(2);
+  expect(buttons[0].data.label).toBe("View Schedule");
+  expect(buttons[1].data.label).toBe("Next Boss");
 });

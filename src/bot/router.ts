@@ -1,4 +1,6 @@
 import {
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   escapeMarkdown,
   MessageFlags,
@@ -179,6 +181,8 @@ export class Router {
         i.message.flags.has(MessageFlags.Ephemeral);
       if (update && (i.isButton() || i.isAnySelectMenu()))
         await i.deferUpdate();
+      else if (action === "defeated")
+        await i.deferReply();
       else await i.deferReply({ flags: MessageFlags.Ephemeral });
       const respond = async (view: View) => {
         await i.editReply({ ...view, content: "" });
@@ -658,23 +662,38 @@ export class Router {
             );
           }
 
-          lines.push(`\nTimezone: Philippine Time (UTC+8)`);
-
           await respond(
             this.views.view(
               "⚔️ BOSS DEFEAT RECORDED",
               lines.join("\n"),
               [
                 row(
-                  this.views.button(
-                    g,
-                    u,
-                    "viewBossDetail",
-                    "Boss Details",
-                    String(b.id),
-                  ),
-                  this.views.button(g, u, "schedule", "View Schedule", "0"),
-                  this.views.back(g, u, "main"),
+                  new ButtonBuilder()
+                    .setCustomId(
+                      this.views.components.id(
+                        g,
+                        "0",
+                        "schedule",
+                        "0",
+                        true,
+                      ),
+                    )
+                    .setLabel("View Schedule")
+                    .setEmoji("📅")
+                    .setStyle(ButtonStyle.Secondary),
+                  new ButtonBuilder()
+                    .setCustomId(
+                      this.views.components.id(
+                        g,
+                        "0",
+                        "next",
+                        "",
+                        true,
+                      ),
+                    )
+                    .setLabel("Next Boss")
+                    .setEmoji("⏱")
+                    .setStyle(ButtonStyle.Secondary),
                 ),
               ],
               0x10b981,
