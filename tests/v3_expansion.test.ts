@@ -31,8 +31,15 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
   describe("Feature 1 — Advanced Boss Scheduling", () => {
     it("normalizes weekdays flexibly from string, array, or JSON", () => {
       expect(normalizeWeekdays("mon, wed, fri")).toEqual(["mon", "wed", "fri"]);
-      expect(normalizeWeekdays("Friday, Monday, Wednesday")).toEqual(["mon", "wed", "fri"]);
-      expect(normalizeWeekdays(JSON.stringify(["fri", "mon"]))).toEqual(["mon", "fri"]);
+      expect(normalizeWeekdays("Friday, Monday, Wednesday")).toEqual([
+        "mon",
+        "wed",
+        "fri",
+      ]);
+      expect(normalizeWeekdays(JSON.stringify(["fri", "mon"]))).toEqual([
+        "mon",
+        "fri",
+      ]);
       expect(formatWeeklyDays("mon, wed, fri")).toBe("Mon, Wed, Fri");
       expect(formatWeeklyDays([])).toBe("None");
     });
@@ -107,12 +114,18 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
       expect(isBossDueOnDay(boss, otherDay)).toBe(false);
 
       // Before event: occurrence matches
-      const beforeEvent = DateTime.fromISO("2026-12-15T10:00:00", { zone: ZONE }).toMillis();
+      const beforeEvent = DateTime.fromISO("2026-12-15T10:00:00", {
+        zone: ZONE,
+      }).toMillis();
       const occBefore = getNextBossOccurrence(boss, "19:00", beforeEvent);
-      expect(occBefore).toBe(DateTime.fromISO("2026-12-15T19:00:00", { zone: ZONE }).toMillis());
+      expect(occBefore).toBe(
+        DateTime.fromISO("2026-12-15T19:00:00", { zone: ZONE }).toMillis(),
+      );
 
       // After event: occurrence is null (does not repeat)
-      const afterEvent = DateTime.fromISO("2026-12-15T20:00:00", { zone: ZONE }).toMillis();
+      const afterEvent = DateTime.fromISO("2026-12-15T20:00:00", {
+        zone: ZONE,
+      }).toMillis();
       const occAfter = getNextBossOccurrence(boss, "19:00", afterEvent);
       expect(occAfter).toBeNull();
     });
@@ -147,10 +160,14 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
       );
 
       const adminView = views.boss(G, U, weeklyBoss.id, false);
-      expect(adminView.embeds[0]!.data.description).toContain("Weekly (Mon, Fri)");
+      expect(adminView.embeds[0]!.data.description).toContain(
+        "Weekly (Mon, Fri)",
+      );
 
       const memberView = views.boss(G, U, weeklyBoss.id, true);
-      expect(memberView.embeds[0]!.data.description).toContain("Weekly (Mon, Fri)");
+      expect(memberView.embeds[0]!.data.description).toContain(
+        "Weekly (Mon, Fri)",
+      );
     });
   });
 
@@ -201,7 +218,15 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
     it("filters audit logs by category (boss, channel, settings)", () => {
       store.db.prepare("DELETE FROM audit_logs").run();
       store.addAuditLog(G, U, "channel_set", "channel", "999", "old", "new");
-      store.addAuditLog(G, U, "settings_update", "settings", null, null, '{"notifications_enabled":0}');
+      store.addAuditLog(
+        G,
+        U,
+        "settings_update",
+        "settings",
+        null,
+        null,
+        '{"notifications_enabled":0}',
+      );
       store.addAuditLog(G, U, "boss_add", "boss", "1", null, "New Boss");
 
       expect(store.auditLogs(G, "channel").length).toBe(1);
@@ -218,17 +243,37 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
             event_key, guild_id, boss_id, spawn_at, minutes, scheduled_at, status, sent_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run("evt_test", G, 1, Date.now() - 60000, 0, Date.now() - 60000, "sent", Date.now() - 59000);
+        .run(
+          "evt_test",
+          G,
+          1,
+          Date.now() - 60000,
+          0,
+          Date.now() - 60000,
+          "sent",
+          Date.now() - 59000,
+        );
 
+      store.schedulerHeartbeat = Date.now();
       const statusView = views.status(G, U);
       expect(statusView.embeds[0]!.data.title).toBe("📊 BOT SYSTEM STATUS");
-      expect(statusView.embeds[0]!.data.description).toContain("Bot Status:** 🟢 Online");
-      expect(statusView.embeds[0]!.data.description).toContain("Scheduler:** 🟢 Running");
-      expect(statusView.embeds[0]!.data.description).toContain("Database:** 🟢 Connected");
-      expect(statusView.embeds[0]!.data.description).toContain("Last Delivery:** 🟢 Successful");
+      expect(statusView.embeds[0]!.data.description).toContain(
+        "Bot Status:** 🟢 Online",
+      );
+      expect(statusView.embeds[0]!.data.description).toContain(
+        "Scheduler:** 🟢 Running",
+      );
+      expect(statusView.embeds[0]!.data.description).toContain(
+        "Database:** 🟢 Connected",
+      );
+      expect(statusView.embeds[0]!.data.description).toContain(
+        "Last Delivery:** 🟢 Successful",
+      );
 
       // Buttons check
-      const btnRow1 = statusView.components[0]!.components.map((c) => (c.toJSON() as any).label);
+      const btnRow1 = statusView.components[0]!.components.map(
+        (c) => (c.toJSON() as any).label,
+      );
       expect(btnRow1).toContain("🔄 Refresh");
       expect(btnRow1).toContain("📋 Delivery Logs");
       expect(btnRow1).toContain("📜 Audit Logs");
@@ -243,13 +288,30 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
               event_key, guild_id, boss_id, spawn_at, minutes, scheduled_at, status, sent_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(`evt_${i}`, G, 1, Date.now() - (i + 1) * 60000, 30, Date.now() - (i + 1) * 60000, "sent", Date.now() - (i + 1) * 60000);
+          .run(
+            `evt_${i}`,
+            G,
+            1,
+            Date.now() - (i + 1) * 60000,
+            30,
+            Date.now() - (i + 1) * 60000,
+            "sent",
+            Date.now() - (i + 1) * 60000,
+          );
       }
 
       const logsView = views.deliveryLogs(G, U, 0);
-      expect(logsView.embeds[0]!.data.title).toBe("📋 NOTIFICATION DELIVERY LOGS");
-      expect(logsView.embeds[0]!.data.description).toContain("Page 1 of 2 • 8 total events");
-      expect(logsView.components[0]!.components.map((c) => (c.toJSON() as any).label)).toContain("Next");
+      expect(logsView.embeds[0]!.data.title).toBe(
+        "📋 NOTIFICATION DELIVERY LOGS",
+      );
+      expect(logsView.embeds[0]!.data.description).toContain(
+        "Page 1 of 2 • 8 total events",
+      );
+      expect(
+        logsView.components[0]!.components.map(
+          (c) => (c.toJSON() as any).label,
+        ),
+      ).toContain("Next");
     });
 
     it("prunes old logs while strictly preserving active bosses and settings", () => {
@@ -258,8 +320,26 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
       const oldAuditTime = now - 95 * 86_400_000; // 95 days old (cutoff 90)
       const freshAuditTime = now - 10 * 86_400_000; // 10 days old
 
-      store.addAuditLog(G, U, "boss_add", "boss", "1", null, "Old Boss", oldAuditTime);
-      store.addAuditLog(G, U, "boss_add", "boss", "2", null, "Recent Boss", freshAuditTime);
+      store.addAuditLog(
+        G,
+        U,
+        "boss_add",
+        "boss",
+        "1",
+        null,
+        "Old Boss",
+        oldAuditTime,
+      );
+      store.addAuditLog(
+        G,
+        U,
+        "boss_add",
+        "boss",
+        "2",
+        null,
+        "Recent Boss",
+        freshAuditTime,
+      );
 
       expect(store.auditLogs(G).length).toBe(2);
 
@@ -315,7 +395,14 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
 
     it("records and queries kill reports in SQLite", () => {
       const b = store.bosses(G)[0]!;
-      const rep = store.recordKillReport(G, b.id, U, "defeat", Date.now() - 10000, "Guild raid kill");
+      const rep = store.recordKillReport(
+        G,
+        b.id,
+        U,
+        "defeat",
+        Date.now() - 10000,
+        "Guild raid kill",
+      );
       expect(rep.id).toBeDefined();
       expect(rep.report_type).toBe("defeat");
       expect(rep.notes).toBe("Guild raid kill");
@@ -330,10 +417,16 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
     it("presents all 4 schedule types in addScheduleType including Interval Respawn", () => {
       const v = views.addScheduleType(G, U);
       expect(v.embeds[0]!.data.title).toBe("➕ SELECT SCHEDULE TYPE");
-      expect(v.embeds[0]!.data.description).toContain("Daily Schedule (Type A)");
-      expect(v.embeds[0]!.data.description).toContain("Weekly Schedule (Type B)");
+      expect(v.embeds[0]!.data.description).toContain(
+        "Daily Schedule (Type A)",
+      );
+      expect(v.embeds[0]!.data.description).toContain(
+        "Weekly Schedule (Type B)",
+      );
       expect(v.embeds[0]!.data.description).toContain("Special Event (Type C)");
-      expect(v.embeds[0]!.data.description).toContain("Interval Respawn (Type D)");
+      expect(v.embeds[0]!.data.description).toContain(
+        "Interval Respawn (Type D)",
+      );
 
       const buttonLabels = v.components.flatMap((r) =>
         r.components.map((c) => (c.toJSON() as any).label),
@@ -379,8 +472,12 @@ describe("Gehenna Boss Tracker V3 Feature Expansion", () => {
 
       // Verify boss detail view formatting
       const bView = views.boss(G, U, b.id, false);
-      expect(bView.embeds[0]!.data.description).toContain("Interval (8h after defeat)");
-      expect(bView.embeds[0]!.data.description).toContain("Respawn Interval:** 8 hours after defeat");
+      expect(bView.embeds[0]!.data.description).toContain(
+        "Interval (8h after defeat)",
+      );
+      expect(bView.embeds[0]!.data.description).toContain(
+        "Respawn Interval:** 8 hours after defeat",
+      );
     });
   });
 });

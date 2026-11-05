@@ -7,7 +7,12 @@ import {
   type Interaction,
   type RepliableInteraction,
 } from "discord.js";
-import { Store, settingToggles, type Boss, type ScheduleType } from "../database/store.js";
+import {
+  Store,
+  settingToggles,
+  type Boss,
+  type ScheduleType,
+} from "../database/store.js";
 import { row, Views, type View } from "../ui/views.js";
 import { Notifications } from "../services/notifications.js";
 import { Subscriptions } from "../services/subscriptions.js";
@@ -19,6 +24,8 @@ import { errorCode, log, UserError } from "../utils/logger.js";
 
 const adminActions = new Set([
   "admin",
+  "alive",
+  "undo-report",
   "more",
   "add",
   "addScheduleType",
@@ -105,10 +112,9 @@ export class Router {
         } else if (i.commandName === "panel") action = "main";
         else if (i.commandName === "boss") {
           action =
-            ({ setup: "admin", list: "schedule" } as Record<
-              string,
-              string
-            >)[sub!] ?? sub!;
+            ({ setup: "admin", list: "schedule" } as Record<string, string>)[
+              sub!
+            ] ?? sub!;
           if (action === "subscribe")
             arg = String(i.options.getInteger("boss") ?? 0);
           else if (action === "unsubscribe")
@@ -116,7 +122,7 @@ export class Router {
           else if (action === "audit") {
             const filter = i.options.getString("filter") || "all";
             arg = `${filter}:0`;
-          } else if (action === "defeated") {
+          } else if (["defeated", "alive", "undo-report"].includes(action)) {
             arg = String(i.options.getInteger("boss") ?? "");
           }
         } else throw new UserError("Unknown command. Use /boss help.");
@@ -136,7 +142,8 @@ export class Router {
           action === "edit" ||
           (action === "add" &&
             ((i.isButton() && Boolean(arg)) ||
-              (i.isChatInputCommand() && Boolean(i.options.getString("schedule"))))));
+              (i.isChatInputCommand() &&
+                Boolean(i.options.getString("schedule"))))));
 
       if (shouldOpenModal && (i.isChatInputCommand() || i.isButton())) {
         let schedType: ScheduleType = "daily";
@@ -152,13 +159,14 @@ export class Router {
             if (opt && ["daily", "weekly", "event", "interval"].includes(opt)) {
               schedType = opt as ScheduleType;
             }
-          } else if (arg && ["daily", "weekly", "event", "interval"].includes(arg)) {
+          } else if (
+            arg &&
+            ["daily", "weekly", "event", "interval"].includes(arg)
+          ) {
             schedType = arg as ScheduleType;
           }
         }
-        await i.showModal(
-          this.views.bossModal(g, u, boss, schedType),
-        );
+        await i.showModal(this.views.bossModal(g, u, boss, schedType));
         return;
       }
       if (action === "intervals" && i.isButton()) {
@@ -243,14 +251,11 @@ export class Router {
           if (!["yes", "no"].includes(enabled))
             throw new UserError("Enabled must be yes or no.");
           const isNew = bossIdStr === "new";
-          const scheduleType = ([
-            "daily",
-            "weekly",
-            "event",
-            "interval",
-          ].includes(scheduleTypeStr)
-            ? scheduleTypeStr
-            : "daily") as ScheduleType;
+          const scheduleType = (
+            ["daily", "weekly", "event", "interval"].includes(scheduleTypeStr)
+              ? scheduleTypeStr
+              : "daily"
+          ) as ScheduleType;
 
           let recurrence_days: string | undefined;
           let event_date: string | undefined;
@@ -301,7 +306,9 @@ export class Router {
           );
           const warning = await this.publicPanel.refreshAfterChange(g);
           if (isNew) {
-            const schedList = b.times.map((t) => `- ${formatTime(t)}`).join("\n");
+            const schedList = b.times
+              .map((t) => `- ${formatTime(t)}`)
+              .join("\n");
             let freq = "Daily";
             if (b.schedule_type === "weekly") {
               freq = `Weekly (${formatWeeklyDays(b.recurrence_days)})`;
@@ -316,7 +323,12 @@ export class Router {
               this.views.view("✅ Boss Added Successfully", text, [
                 row(
                   this.views.button(g, u, "manage", "View Bosses", "0"),
-                  this.views.button(g, u, "addScheduleType", "Add Another Boss"),
+                  this.views.button(
+                    g,
+                    u,
+                    "addScheduleType",
+                    "Add Another Boss",
+                  ),
                   this.views.back(g, u, "admin"),
                 ),
               ]),
@@ -324,7 +336,10 @@ export class Router {
           } else {
             const view = this.views.boss(g, u, b.id);
             if (warning)
-              view.embeds[0]!.addFields({ name: "Public panel", value: warning });
+              view.embeds[0]!.addFields({
+                name: "Public panel",
+                value: warning,
+              });
             await respond(view);
           }
           break;
@@ -589,13 +604,23 @@ export class Router {
           await respond(this.views.audit(g, u, filter, page));
           break;
         }
+        case "alive":
+        case "undo-report": {
+          const id = Number(arg);
+          if (action === "alive")
+            this.store.recordKillReport(g, id, u, "alive", Date.now());
+          else this.store.undoLatestReport(g, id, u);
+          await this.publicPanel.refreshAfterChange(g);
+          await respond(this.views.boss(g, u, id, false));
+          break;
+        }
         case "defeated": {
           const s = this.store.settings(g);
           if (!s.interval_respawn_tracking_enabled) {
             await respond(
               this.views.view(
                 "⚠️ FEATURE CURRENTLY DISABLED",
-                "Manual boss kill and interval respawn tracking is currently disabled on this server.\n\nAn administrator can enable it in **Admin Control Panel (/panel)** ➔ **🔔 Alerts** ➔ **Interval Tracking (Future)**.",
+                "Manual boss kill and interval respawn tracking is currently disabled on this server.\n\nAn administrator can enable it in **Admin Control Panel (/panel)** ➔ **🔔 Alerts** ➔ **Interval Respawn Alerts**.",
                 [row(this.views.back(g, u, "main"))],
                 0xf59e0b,
               ),
@@ -611,6 +636,7 @@ export class Router {
           const b = this.store.boss(g, bossId);
           const nowMs = Date.now();
           this.store.recordKillReport(g, b.id, u, "defeat", nowMs);
+          await this.publicPanel.refreshAfterChange(g);
 
           const nowSec = Math.floor(nowMs / 1000);
           const lines: string[] = [

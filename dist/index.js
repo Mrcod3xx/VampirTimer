@@ -1,3 +1,4 @@
+import { syncCommands } from "./services/commandSync.js";
 import { loginWithCooldown } from "./services/login.js";
 import { Events, RESTEvents } from "discord.js";
 import { Store } from "./database/store.js";
@@ -6,7 +7,6 @@ import { createClient } from "./bot/client.js";
 import { Components } from "./ui/components.js";
 import { Views } from "./ui/views.js";
 import { Router } from "./bot/router.js";
-import { commands } from "./bot/commands.js";
 import { Notifications } from "./services/notifications.js";
 import { Scheduler } from "./services/scheduler.js";
 import { errorCode, log } from "./utils/logger.js";
@@ -47,36 +47,13 @@ async function main() {
                 await router.publicPanel.refresh(guild.id).catch(() => { });
             }
             scheduler.start();
-            // Sync slash commands cleanly without duplicating across global and guild scopes
             try {
-                if (config.DISCORD_GUILD_ID) {
-                    const guild = client.guilds.cache.get(config.DISCORD_GUILD_ID);
-                    if (guild) {
-                        await guild.commands.set(commands);
-                        if (client.application) {
-                            await client.application.commands.set([]).catch(() => { });
-                        }
-                        log("info", "Synced slash commands to target guild", {
-                            guild: config.DISCORD_GUILD_ID,
-                            count: commands.length,
-                        });
-                    }
-                }
-                else {
-                    // Remove any leftover guild-scoped commands so Discord never shows duplicate entries
-                    for (const guild of client.guilds.cache.values()) {
-                        await guild.commands.set([]).catch(() => { });
-                    }
-                    if (client.application) {
-                        await client.application.commands.set(commands);
-                        log("info", "Synced slash commands globally", {
-                            count: commands.length,
-                        });
-                    }
-                }
+                await syncCommands(store, client, config.DISCORD_GUILD_ID);
             }
-            catch (err) {
-                log("warn", "Slash command sync failed", { code: errorCode(err) });
+            catch (error) {
+                log("warn", "Command sync incomplete; it will retry on next startup", {
+                    code: errorCode(error),
+                });
             }
             log("info", "Boss tracker ready", {
                 guilds: client.guilds.cache.size,
@@ -92,7 +69,7 @@ async function main() {
     client.on(Events.GuildCreate, (guild) => {
         try {
             store.initGuild(guild.id);
-            void guild.commands.set([]).catch(() => { });
+            // Global commands already apply to newly joined guilds.
             void router.publicPanel.refresh(guild.id).catch(() => { });
         }
         catch (error) {
@@ -112,12 +89,16 @@ async function main() {
             login: () => client.login(config.DISCORD_TOKEN),
             signal: loginAbort.signal,
             readDeadline: () => {
-                const saved = store.db.prepare("SELECT value FROM metadata WHERE key='login_retry_at'").get();
+                const saved = store.db
+                    .prepare("SELECT value FROM metadata WHERE key='login_retry_at'")
+                    .get();
                 const value = Number(saved?.value ?? 0);
                 return Number.isFinite(value) ? value : 0;
             },
-            saveDeadline: deadline => {
-                store.db.prepare("INSERT INTO metadata(key,value) VALUES ('login_retry_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(deadline));
+            saveDeadline: (deadline) => {
+                store.db
+                    .prepare("INSERT INTO metadata(key,value) VALUES ('login_retry_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+                    .run(String(deadline));
             },
         });
     }

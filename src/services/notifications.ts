@@ -11,6 +11,7 @@ import { Store, type Event } from "../database/store.js";
 import { SafeRetry, type Delivery } from "./scheduler.js";
 import {
   ZONE,
+  getNextBossOccurrence,
   formatPhilippineTime,
   formatTime,
   getNextOccurrence,
@@ -30,6 +31,22 @@ export function scheduleText(
   const bosses = store.bosses(guildId).filter((b) => b.enabled);
   if (!bosses.length) return "No active bosses configured.";
 
+  if (bosses.some((b) => b.schedule_type !== "daily")) {
+    const tracking = Boolean(
+      store.settings(guildId).interval_respawn_tracking_enabled,
+    );
+    const text = bosses
+      .slice(0, 12)
+      .map((b) => {
+        const times = (b.schedule_type === "interval" ? ["00:00"] : b.times)
+          .map((t) => getNextBossOccurrence(b, t, nowMs, tracking))
+          .filter((t): t is number => t !== null);
+        const at = times.length ? Math.min(...times) : null;
+        return `**${escapeMarkdown(b.name)}** · ${b.schedule_type}\n${at !== null ? `Next: <t:${toUnixSeconds(at)}:f> (<t:${toUnixSeconds(at)}:R>)` : b.schedule_type === "interval" ? "Awaiting a defeat report, or tracking disabled" : "No upcoming occurrence"}`;
+      })
+      .join("\n\n");
+    return text + (bosses.length > 12 ? "\n\nMore bosses: /boss schedule" : "");
+  }
   const timeMap = new Map<string, typeof bosses>();
   for (const b of bosses) {
     for (const t of b.times) {
@@ -112,7 +129,10 @@ export function scheduleText(
     sections.push("\n… and more. Use View Bosses.");
   }
 
-  return sections.join("\n");
+  const text = sections.join("\n");
+  return text.length > 3800
+    ? text.slice(0, 3700) + "\n\nFull schedule: /boss schedule"
+    : text;
 }
 export class Notifications implements Delivery {
   constructor(
@@ -267,6 +287,21 @@ export class Notifications implements Delivery {
       }
     }
 
+    if (
+      !daily &&
+      events.some(
+        (e) =>
+          this.store.boss(first.guild_id, e.boss_id).schedule_type ===
+          "interval",
+      )
+    ) {
+      title =
+        first.minutes === 0
+          ? "⏳ ESTIMATED RESPAWN TIME"
+          : `⏳ ESTIMATED RESPAWN IN ${first.minutes} MINUTES`;
+      description +=
+        "\n\nRespawn estimates use player defeat reports; appearance is not confirmed in-game.";
+    }
     const embed = new EmbedBuilder()
       .setColor(color)
       .setTitle(title)

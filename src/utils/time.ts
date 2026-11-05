@@ -69,7 +69,10 @@ export function discordRelative(val: number | Date | DateTime): string {
   return `<t:${toUnixSeconds(val)}:R>`;
 }
 
-export function getTodayOccurrence(timeStr: string, nowMs = Date.now()): number {
+export function getTodayOccurrence(
+  timeStr: string,
+  nowMs = Date.now(),
+): number {
   const day = DateTime.fromMillis(nowMs, { zone: ZONE });
   return atTime(day, timeStr).toMillis();
 }
@@ -165,7 +168,10 @@ export function formatWeeklyDays(
 export function parseEventDate(input: string): string {
   const trimmed = input.trim();
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
-  if (!match) throw new UserError("Event date must use YYYY-MM-DD format (e.g. 2026-12-15).");
+  if (!match)
+    throw new UserError(
+      "Event date must use YYYY-MM-DD format (e.g. 2026-12-15).",
+    );
   const dt = DateTime.fromISO(trimmed, { zone: ZONE });
   if (!dt.isValid) throw new UserError("Invalid calendar date.");
   return dt.toFormat("yyyy-MM-dd");
@@ -187,7 +193,9 @@ export function isBossDueOnDay(
     return valid.includes(day.toFormat("ccc").toLowerCase());
   }
   if (type === "event") {
-    return Boolean(boss.event_date && day.toFormat("yyyy-MM-dd") === boss.event_date);
+    return Boolean(
+      boss.event_date && day.toFormat("yyyy-MM-dd") === boss.event_date,
+    );
   }
   if (type === "interval") {
     return intervalTrackingEnabled;
@@ -206,9 +214,13 @@ export function getNextBossOccurrence(
 
   if (type === "event") {
     if (!boss.event_date) return null;
-    const dt = DateTime.fromFormat(`${boss.event_date} ${timeStr}`, "yyyy-MM-dd HH:mm", {
-      zone: ZONE,
-    });
+    const dt = DateTime.fromFormat(
+      `${boss.event_date} ${timeStr}`,
+      "yyyy-MM-dd HH:mm",
+      {
+        zone: ZONE,
+      },
+    );
     if (!dt.isValid) return null;
     const ms = dt.toMillis();
     return ms >= nowMs ? ms : null;
@@ -229,7 +241,8 @@ export function getNextBossOccurrence(
   }
 
   if (type === "interval") {
-    return null; // Disabled initially
+    const at = boss.estimated_respawn_at;
+    return intervalTrackingEnabled && at != null && at >= nowMs ? at : null;
   }
 
   // Daily
@@ -241,6 +254,7 @@ export function getNextBossOccurrence(
 }
 
 export interface TimedBoss {
+  estimated_respawn_at?: number | null;
   id: number;
   name: string;
   description?: string;
@@ -261,15 +275,17 @@ export function nextSpawn(
   const candidates = bosses
     .filter((b) => b.enabled)
     .flatMap((boss) =>
-      boss.times.map((time) => {
-        const at = getNextBossOccurrence(
-          boss,
-          time,
-          now,
-          intervalTrackingEnabled,
-        );
-        return at !== null ? { boss, at } : null;
-      }),
+      (boss.schedule_type === "interval" ? ["00:00"] : boss.times).map(
+        (time) => {
+          const at = getNextBossOccurrence(
+            boss,
+            time,
+            now,
+            intervalTrackingEnabled,
+          );
+          return at !== null ? { boss, at } : null;
+        },
+      ),
     )
     .filter((c): c is { boss: TimedBoss; at: number } => c !== null);
 

@@ -257,3 +257,17 @@ it("requires confirmation to forget a stale public panel", async () => {
   await t.run("confirmResetPanel");
   expect(t.store.settings(G).panel_message_id).toBeNull();
 });
+
+it("protects report correction commands and restores the prior timer on undo", async () => {
+  const t = setup();
+  const b = t.store.bosses(G)[0]!;
+  t.store.recordKillReport(G, b.id, U, "defeat", Date.now() - 120000);
+  for (const action of ["alive", "undo-report"]) {
+    const denied = await t.run(action, String(b.id), "button", { memberPermissions: new PermissionsBitField() });
+    expect(denied.reply.mock.calls[0]![0].content).toContain("administrators");
+  }
+  await t.run("alive", String(b.id));
+  expect(t.store.latestKillReport(G, b.id)?.report_type).toBe("alive");
+  await t.run("undo-report", String(b.id));
+  expect(t.store.latestKillReport(G, b.id)?.report_type).toBe("defeat");
+});

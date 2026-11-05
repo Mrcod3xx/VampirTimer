@@ -14,3 +14,5 @@ Suggested next development milestone: complete items 1–3 before adding more ga
 ## Rate-limit fix delivered locally
 
 Login retries now respect the full reported cooldown, distinguish discord.js millisecond values from Discord JSON second values, persist the next retry across restarts, report remaining time and a Philippine-time retry timestamp, and cancel waits on shutdown. Unknown 429 durations use increasing backoff. Invalid credentials do not retry. This does not clear or control a shared hosting IP restriction or its banner.
+
+Update: interval respawn delivery, command-sync caching and scheduler status improvements are now implemented. See UPGRADE.md for scope, activation and remaining work.

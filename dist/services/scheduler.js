@@ -16,11 +16,14 @@ export function validEvent(e, s, bosses) {
     if (e.minutes === -1)
         return Boolean(s.daily_enabled && time === s.daily_time);
     const boss = bosses.find((b) => b.id === e.boss_id);
-    if (!boss?.enabled ||
-        !boss.times.includes(time) ||
-        !stages(s).includes(e.minutes)) {
+    if (!boss?.enabled || !stages(s).includes(e.minutes)) {
         return false;
     }
+    if (boss.schedule_type === "interval")
+        return Boolean(s.interval_respawn_tracking_enabled &&
+            boss.estimated_respawn_at === e.spawn_at);
+    if (!boss.times.includes(time))
+        return false;
     const eventDay = DateTime.fromMillis(e.spawn_at, { zone: ZONE });
     const intervalEnabled = Boolean(s.interval_respawn_tracking_enabled);
     return isBossDueOnDay(boss, eventDay, intervalEnabled);
@@ -87,9 +90,16 @@ export class Scheduler {
                 };
                 if (s.notifications_enabled) {
                     const intervalEnabled = Boolean(s.interval_respawn_tracking_enabled);
+                    if (intervalEnabled)
+                        for (const boss of bosses.filter((b) => b.enabled && b.schedule_type === "interval")) {
+                            if (boss.estimated_respawn_at != null)
+                                for (const stage of stages(s))
+                                    add(boss.id, boss.estimated_respawn_at, stage);
+                        }
                     for (let day = first; day <= end; day = day.plus({ days: 1 })) {
                         for (const boss of bosses.filter((b) => b.enabled)) {
-                            if (!isBossDueOnDay(boss, day, intervalEnabled))
+                            if (boss.schedule_type === "interval" ||
+                                !isBossDueOnDay(boss, day, intervalEnabled))
                                 continue;
                             for (const time of boss.times)
                                 for (const stage of stages(s))
@@ -108,7 +118,15 @@ export class Scheduler {
     async tick() {
         if (this.running)
             return this.running;
-        this.running = this.work().finally(() => {
+        this.running = this.work()
+            .then(() => {
+            this.store.schedulerHeartbeat = this.clock();
+            this.store.schedulerError = null;
+        }, (error) => {
+            this.store.schedulerError = errorCode(error);
+            throw error;
+        })
+            .finally(() => {
             this.running = null;
         });
         return this.running;
@@ -121,7 +139,7 @@ export class Scheduler {
         const db = this.store.db;
         db.prepare("UPDATE notification_logs SET status='missed',error_message='Lateness window expired' WHERE status='pending' AND scheduled_at<?").run(now - this.lateness);
         if (now - this.cleanedAt > 3_600_000) {
-            this.store.cleanupLogs(now);
+            this.store.cleanupLogs(now, this.historyDays);
             db.pragma("wal_checkpoint(PASSIVE)");
             this.cleanedAt = now;
             log("info", "Scheduler health", {

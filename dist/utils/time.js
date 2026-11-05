@@ -199,7 +199,8 @@ export function getNextBossOccurrence(boss, timeStr, nowMs = Date.now(), interva
         return null;
     }
     if (type === "interval") {
-        return null; // Disabled initially
+        const at = boss.estimated_respawn_at;
+        return intervalTrackingEnabled && at != null && at >= nowMs ? at : null;
     }
     // Daily
     let cand = atTime(dayNow, timeStr).toMillis();
@@ -211,7 +212,7 @@ export function getNextBossOccurrence(boss, timeStr, nowMs = Date.now(), interva
 export function nextSpawn(bosses, now, intervalTrackingEnabled = false) {
     const candidates = bosses
         .filter((b) => b.enabled)
-        .flatMap((boss) => boss.times.map((time) => {
+        .flatMap((boss) => (boss.schedule_type === "interval" ? ["00:00"] : boss.times).map((time) => {
         const at = getNextBossOccurrence(boss, time, now, intervalTrackingEnabled);
         return at !== null ? { boss, at } : null;
     }))

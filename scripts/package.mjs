@@ -19,6 +19,7 @@ for (const file of [
   "DEPLOYMENT.md",
   "RELIABILITY.md",
   "VERIFICATION.md",
+  "UPGRADE.md",
 ])
   cpSync(join(root, file), join(stage, file), { recursive: true });
 execFileSync(

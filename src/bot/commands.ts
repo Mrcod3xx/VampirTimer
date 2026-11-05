@@ -147,5 +147,31 @@ export const commands = [
             .setAutocomplete(true),
         ),
     )
+    .addSubcommand((s) =>
+      s
+        .setName("alive")
+        .setDescription(
+          "Admin: confirm a boss is alive and cancel its estimated timer",
+        )
+        .addIntegerOption((o) =>
+          o
+            .setName("boss")
+            .setDescription("Select boss")
+            .setRequired(true)
+            .setAutocomplete(true),
+        ),
+    )
+    .addSubcommand((s) =>
+      s
+        .setName("undo-report")
+        .setDescription("Admin: undo the latest boss report")
+        .addIntegerOption((o) =>
+          o
+            .setName("boss")
+            .setDescription("Select boss")
+            .setRequired(true)
+            .setAutocomplete(true),
+        ),
+    )
     .addSubcommand((s) => s.setName("help").setDescription("Command guide")),
 ];

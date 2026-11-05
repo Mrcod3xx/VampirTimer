@@ -8,16 +8,61 @@ import { normalizeWeekdays, parseEventDate, parseTimes, ZONE, } from "../utils/t
 import { UserError } from "../utils/logger.js";
 export const DEFAULT_BOSSES = [
     // 1-Star Bosses (Spawn at 2:00 PM, 6:00 PM, 10:00 PM Philippine Time)
-    { name: "Lv. 56 Mildis", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
-    { name: "Lv. 56 Regan", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
-    { name: "Lv. 56 Avok", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
-    { name: "Lv. 60 Eligo", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
-    { name: "Lv. 60 Lussem", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
-    { name: "Lv. 60 Arto", description: "1-Star Boss", times: "14:00,18:00,22:00", enabled: true },
+    {
+        name: "Lv. 56 Mildis",
+        description: "1-Star Boss",
+        times: "14:00,18:00,22:00",
+        enabled: true,
+    },
+    {
+        name: "Lv. 56 Regan",
+        description: "1-Star Boss",
+        times: "14:00,18:00,22:00",
+        enabled: true,
+    },
+    {
+        name: "Lv. 56 Avok",
+        description: "1-Star Boss",
+        times: "14:00,18:00,22:00",
+        enabled: true,
+    },
+    {
+        name: "Lv. 60 Eligo",
+        description: "1-Star Boss",
+        times: "14:00,18:00,22:00",
+        enabled: true,
+    },
+    {
+        name: "Lv. 60 Lussem",
+        description: "1-Star Boss",
+        times: "14:00,18:00,22:00",
+        enabled: true,
+    },
+    {
+        name: "Lv. 60 Arto",
+        description: "1-Star Boss",
+        times: "14:00,18:00,22:00",
+        enabled: true,
+    },
     // 2-Star Bosses (Spawn at 2:00 PM, 10:00 PM Philippine Time)
-    { name: "Lv. 62 Guardian Beast Gazoth", description: "2-Star Boss", times: "14:00,22:00", enabled: true },
-    { name: "Lv. 62 Guardian Beast K'Valkan", description: "2-Star Boss", times: "14:00,22:00", enabled: true },
-    { name: "Lv. 62 Guardian Beast Beherd", description: "2-Star Boss", times: "14:00,22:00", enabled: true },
+    {
+        name: "Lv. 62 Guardian Beast Gazoth",
+        description: "2-Star Boss",
+        times: "14:00,22:00",
+        enabled: true,
+    },
+    {
+        name: "Lv. 62 Guardian Beast K'Valkan",
+        description: "2-Star Boss",
+        times: "14:00,22:00",
+        enabled: true,
+    },
+    {
+        name: "Lv. 62 Guardian Beast Beherd",
+        description: "2-Star Boss",
+        times: "14:00,22:00",
+        enabled: true,
+    },
 ];
 const bossInput = z.object({
     name: z
@@ -97,6 +142,8 @@ const settingsPatch = z
     .strict();
 export class Store {
     path;
+    schedulerHeartbeat = null;
+    schedulerError = null;
     db;
     revision = 0;
     constructor(path) {
@@ -183,6 +230,16 @@ export class Store {
         const times = this.db.prepare("SELECT spawn_time FROM boss_spawn_times WHERE boss_id=? ORDER BY spawn_time");
         return rows.map((b) => ({
             ...b,
+            estimated_respawn_at: b.schedule_type === "interval"
+                ? (() => {
+                    const report = this.latestKillReport(guildId, b.id);
+                    return report &&
+                        report.report_type !== "alive" &&
+                        b.respawn_interval_minutes
+                        ? report.reported_at + b.respawn_interval_minutes * 60_000
+                        : null;
+                })()
+                : null,
             schedule_type: b.schedule_type || "daily",
             timezone: b.timezone || "Asia/Manila",
             times: times.all(b.id).map((t) => t.spawn_time),
@@ -211,6 +268,8 @@ export class Store {
             .get(guildId, key, id ?? -1);
         if (duplicate)
             throw new UserError("A boss with that name already exists.");
+        if (b.schedule_type === "interval" && !b.respawn_interval_minutes)
+            throw new UserError("Set a respawn interval between 1 and 10080 minutes.");
         let recurrence_days = null;
         let event_date = null;
         if (b.schedule_type === "weekly") {
@@ -309,6 +368,11 @@ export class Store {
     }
     recordKillReport(guildId, bossId, userId, reportType, reportedAt, notes) {
         this.boss(guildId, bossId);
+        const latest = this.latestKillReport(guildId, bossId);
+        if (reportType === "defeat" &&
+            latest?.report_type === "defeat" &&
+            Math.abs(reportedAt - latest.reported_at) < 60_000)
+            throw new UserError("A defeat was already reported in the last minute. Use the existing timer.");
         const now = Date.now();
         const id = Number(this.db
             .prepare(`INSERT INTO boss_kill_reports (
@@ -316,6 +380,7 @@ export class Store {
           ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
             .run(guildId, bossId, userId, reportType, reportedAt, now, notes ?? null).lastInsertRowid);
         this.addAuditLog(guildId, userId, `report_${reportType}`, "boss", String(bossId), undefined, `Reported at ${DateTime.fromMillis(reportedAt, { zone: ZONE }).toISO()}`);
+        this.revision++;
         return {
             id,
             guild_id: guildId,
@@ -327,6 +392,20 @@ export class Store {
             notes: notes ?? null,
         };
     }
+    undoLatestReport(guildId, bossId, userId) {
+        this.boss(guildId, bossId);
+        const report = this.latestKillReport(guildId, bossId);
+        if (!report)
+            throw new UserError("This boss has no report to undo.");
+        this.db.transaction(() => {
+            this.db
+                .prepare("DELETE FROM boss_kill_reports WHERE guild_id=? AND id=?")
+                .run(guildId, report.id);
+            this.addAuditLog(guildId, userId, "report_undo", "boss", String(bossId), JSON.stringify(report));
+        })();
+        this.revision++;
+        return report;
+    }
     latestKillReport(guildId, bossId) {
         return this.db
             .prepare("SELECT * FROM boss_kill_reports WHERE guild_id=? AND boss_id=? ORDER BY reported_at DESC, id DESC LIMIT 1")
@@ -337,9 +416,13 @@ export class Store {
             .prepare("SELECT * FROM boss_kill_reports WHERE guild_id=? AND boss_id=? ORDER BY reported_at DESC, id DESC LIMIT ?")
             .all(guildId, bossId, limit);
     }
-    cleanupLogs(now = Date.now()) {
+    cleanupLogs(now = Date.now(), historyDays = 30) {
         const auditCutoff = now - 90 * 86_400_000;
-        const deliveryCutoff = now - 30 * 86_400_000;
+        // Preserve the latest report for each boss even when it is older than history.
+        this.db
+            .prepare("DELETE FROM boss_kill_reports WHERE submitted_at < ? AND id NOT IN (SELECT r.id FROM boss_kill_reports r WHERE r.id=(SELECT id FROM boss_kill_reports newest WHERE newest.guild_id=r.guild_id AND newest.boss_id=r.boss_id ORDER BY reported_at DESC,id DESC LIMIT 1))")
+            .run(auditCutoff);
+        const deliveryCutoff = now - historyDays * 86_400_000;
         const errorCutoff = now - 14 * 86_400_000;
         this.db
             .prepare("DELETE FROM audit_logs WHERE created_at < ?")

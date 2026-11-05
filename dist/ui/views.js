@@ -1,6 +1,7 @@
+import { validEvent } from "../services/scheduler.js";
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, EmbedBuilder, ModalBuilder, RoleSelectMenuBuilder, StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown, } from "discord.js";
 import { DateTime } from "luxon";
-import { settingToggles } from "../database/store.js";
+import { settingToggles, } from "../database/store.js";
 import { ZONE, calculateBossRespawnStatus, formatTime, formatWeeklyDays, getNextBossOccurrence, groupBossesByTierAndLevel, nextSpawn, toUnixSeconds, zoneLabel, } from "../utils/time.js";
 export const row = (...components) => new ActionRowBuilder().addComponents(components);
 const labels = {
@@ -11,7 +12,7 @@ const labels = {
     combine_notifications: "Combine simultaneous spawns",
     role_mentions_enabled: "Role mentions",
     daily_enabled: "Daily schedule",
-    interval_respawn_tracking_enabled: "Interval Tracking (Future)",
+    interval_respawn_tracking_enabled: "Interval Respawn Alerts",
 };
 export class Views {
     store;
@@ -50,7 +51,7 @@ export class Views {
     main(g, u) {
         const s = this.store.settings(g);
         const bosses = this.store.bosses(g);
-        const next = nextSpawn(bosses, this.now());
+        const next = nextSpawn(bosses, this.now(), Boolean(this.store.settings(g).interval_respawn_tracking_enabled));
         let nextSpawnText = "None";
         if (next) {
             const sec = toUnixSeconds(next.at);
@@ -98,7 +99,7 @@ export class Views {
         ], 0x5865f2);
     }
     next(g, u) {
-        const next = nextSpawn(this.store.bosses(g), this.now());
+        const next = nextSpawn(this.store.bosses(g), this.now(), Boolean(this.store.settings(g).interval_respawn_tracking_enabled));
         if (!next) {
             return this.view("⏳ NEXT BOSS SPAWN", "No active schedules.", [
                 row(this.button(g, u, "next", "Refresh"), this.button(g, u, "schedule", "Full Schedule", "0"), this.back(g, u, "main")),
@@ -148,7 +149,7 @@ export class Views {
         return v;
     }
     countdown(g, u) {
-        const next = nextSpawn(this.store.bosses(g), this.now());
+        const next = nextSpawn(this.store.bosses(g), this.now(), Boolean(this.store.settings(g).interval_respawn_tracking_enabled));
         if (!next) {
             return this.view("⏳ NEXT BOSS COUNTDOWN", "No upcoming bosses scheduled.", [
                 row(this.button(g, u, "countdown", "Refresh"), this.button(g, u, "schedule", "Full Schedule", "0"), this.back(g, u, "main")),
@@ -305,24 +306,27 @@ export class Views {
                 `**Schedule Type:** ${scheduleBadge}`,
                 `**Status:** ${b.enabled ? "Active" : "Disabled"}\n`,
                 b.schedule_type === "interval"
-                    ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\n⏰ **Base Spawn:** ${b.times.map(formatTime).join(" • ")}\n`
+                    ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\nTimer starts after a defeat report; base daily times are ignored.\n`
                     : `⏰ **Spawn Schedule**\n${b.times.map((t) => `• ${formatTime(t)} PHT`).join("\n")}\n`,
                 `⏱️ **Next Spawn**`,
                 ...nextSpawnInfo,
             ].join("\n");
             return this.view(`${starEmoji} ${escapeMarkdown(b.name)}`, desc, [
-                row(this.button(g, u, "subscribe", "Subscribe", String(id), ButtonStyle.Success), this.button(g, u, "unsubscribe", "Unsubscribe", String(id)), this.button(g, u, "schedule", "Back to Directory", "0")),
+                row(this.button(g, u, "subscribe", "Subscribe", String(id), ButtonStyle.Success), this.button(g, u, "unsubscribe", "Unsubscribe", String(id)), this.button(g, u, "schedule", "Back to Directory", "0"), ...(b.schedule_type === "interval"
+                    ? [this.button(g, u, "defeated", "Report Defeated", String(id))]
+                    : [])),
             ], 0x8b5cf6);
         }
         const desc = [
             `${b.enabled ? "🟢 Active" : "⏸️ Disabled"}  ${tierBadge} • ${scheduleBadge}\n`,
             b.schedule_type === "interval"
-                ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\n⏰ **Base Spawn:** ${b.times.map(formatTime).join(" • ")}\n`
+                ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\nTimer starts after a defeat report; daily base times are ignored.\n`
                 : `⏰ **Spawn Schedule**\n${b.times.map(formatTime).join(" • ")}\n`,
             `🔔 **Alert Role**\n${b.role_id ? `<@&${b.role_id}>` : "Not configured"}`,
         ].join("\n");
         return this.view(`${starEmoji} ${escapeMarkdown(b.name)}`, desc, [
             row(this.button(g, u, "edit", "✏️ Edit", String(id)), this.button(g, u, "toggleBoss", b.enabled ? "⏸️ Disable" : "▶️ Enable", String(id)), this.button(g, u, "bossRole", "🔔 Set Role", String(id)), this.button(g, u, "remove", "🗑️ Remove", String(id), ButtonStyle.Danger), this.button(g, u, "manage", "← Back", "0")),
+            row(this.button(g, u, "alive", "Confirm Alive", String(id)), this.button(g, u, "undo-report", "Undo Last Report", String(id))),
         ], 0x5865f2);
     }
     remove(g, u, id) {
@@ -365,7 +369,7 @@ export class Views {
     status(g, u) {
         const s = this.store.settings(g);
         const lastLog = this.store.db
-            .prepare("SELECT status, error_message, scheduled_at, sent_at FROM notification_logs WHERE guild_id=? ORDER BY scheduled_at DESC LIMIT 1")
+            .prepare("SELECT status, error_message, scheduled_at, sent_at FROM notification_logs WHERE guild_id=? AND status IN ('sent','missed','uncertain') ORDER BY COALESCE(sent_at, scheduled_at) DESC LIMIT 1")
             .get(g);
         let lastDeliveryText = "No events yet";
         if (lastLog) {
@@ -383,28 +387,38 @@ export class Views {
         const missedCount = this.store.db
             .prepare("SELECT COUNT(*) AS count FROM notification_logs WHERE guild_id=? AND status='missed'")
             .get(g).count;
-        const next = nextSpawn(this.store.bosses(g), this.now());
-        let nextAlertText = "No upcoming alerts scheduled";
-        if (next) {
-            const intervals = JSON.parse(s.reminder_minutes).sort((a, b) => b - a);
-            const candidates = intervals
-                .map((m) => next.at - m * 60000)
-                .filter((t) => t >= this.now());
-            const nextAlertAt = candidates.length > 0 ? Math.min(...candidates) : next.at;
-            const alertSec = toUnixSeconds(nextAlertAt);
-            nextAlertText = `<t:${alertSec}:t> (<t:${alertSec}:R>)`;
-        }
+        const pending = this.store.db
+            .prepare("SELECT * FROM notification_logs WHERE guild_id=? AND status='pending' AND scheduled_at>=? ORDER BY scheduled_at LIMIT 500")
+            .all(g, this.now());
+        const bosses = this.store.bosses(g);
+        const nextAlert = pending.find((event) => validEvent(event, s, bosses));
+        const nextAlertText = !s.notifications_enabled
+            ? "Paused by administrator"
+            : nextAlert
+                ? `<t:${toUnixSeconds(nextAlert.scheduled_at)}:t> (<t:${toUnixSeconds(nextAlert.scheduled_at)}:R>)`
+                : "No pending alerts; schedules reconcile within 30 seconds";
+        const heartbeat = this.store.schedulerHeartbeat;
+        const schedulerStatus = this.store.schedulerError
+            ? `🔴 Error: ${this.store.schedulerError}`
+            : heartbeat !== null && this.now() - heartbeat < 60_000
+                ? "🟢 Running"
+                : "🟡 Waiting for scheduler heartbeat";
+        const uncertain = this.store.db
+            .prepare("SELECT COUNT(*) AS n FROM notification_logs WHERE guild_id=? AND status='uncertain'")
+            .get(g).n;
         const desc = [
             `**Bot Status:** 🟢 Online`,
-            `**Scheduler:** 🟢 Running`,
+            `**Scheduler:** ${schedulerStatus}`,
             `**Database:** 🟢 Connected (SQLite WAL)`,
             `**Timezone:** Philippine Time (UTC+8)\n`,
             `**Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "🔴 Not configured"}`,
             `**Last Delivery:** ${lastDeliveryText}`,
             `**Next Scheduled Alert:** ${nextAlertText}\n`,
-            `**Reliability Metrics (Last 30 Days)**`,
+            `**Reliability Metrics (Retained History)**`,
             `• Failed Deliveries: **${failedCount}**`,
             `• Missed Reminders: **${missedCount}**`,
+            `• Uncertain deliveries: **${uncertain}** (not resent automatically)`,
+            `**Memory:** ${Math.round(process.memoryUsage().rss / 1048576)} MB RSS`,
         ].join("\n");
         return this.view("📊 BOT SYSTEM STATUS", desc, [
             row(this.button(g, u, "status", "🔄 Refresh"), this.button(g, u, "deliveryLogs", "📋 Delivery Logs", "0"), this.button(g, u, "audit", "📜 Audit Logs", "all:0")),
@@ -433,6 +447,8 @@ export class Views {
             failed: "🔴 Failed",
             missed: "⚠️ Missed",
             pending: "⏳ Pending",
+            uncertain: "🟠 Uncertain",
+            sending: "📤 Sending",
             cancelled: "⚪ Cancelled",
         };
         const lines = logs.map((log) => {
@@ -463,7 +479,11 @@ export class Views {
             .setPlaceholder("Filter by category")
             .addOptions([
             { label: "All Changes", value: "all", default: filter === "all" },
-            { label: "Boss Changes", value: "boss", default: filter === "boss" },
+            {
+                label: "Boss Changes",
+                value: "boss",
+                default: filter === "boss",
+            },
             {
                 label: "Channel Changes",
                 value: "channel",
@@ -678,7 +698,7 @@ export class Views {
         ]);
     }
     help() {
-        return this.view("📖 BOSS TRACKER HELP", "**Members**\n/panel — dashboard\n/boss next · countdown — next spawn\n/boss schedule · list — all bosses\n/boss alerts — your preferences\n/boss subscribe [boss] — opt in (omit boss for all)\n/boss unsubscribe [boss] — opt out (omit boss for all)\n\n**Administrators**\n/add boss · /edit boss · /remove boss\n/set channel — notification destination\n/boss setup — settings and roles\n/boss test — test without mentions\n/boss publish — public schedule\n/boss status — recent delivery status\n\nThis bot follows configured daily schedules; it cannot detect in-game spawns.");
+        return this.view("📖 BOSS TRACKER HELP", "**Members**\n/panel — dashboard\n/boss next · countdown — next spawn\n/boss schedule · list — all bosses\n/boss alerts — your preferences\n/boss subscribe [boss] — opt in (omit boss for all)\n/boss unsubscribe [boss] — opt out (omit boss for all)\n\n**Administrators**\n/add boss · /edit boss · /remove boss\n/set channel — notification destination\n/boss setup — settings and roles\n/boss test — test without mentions\n/boss publish — public schedule\n/boss status — recent delivery status\n/boss alive · /boss undo-report — administrator report corrections\n\nThis bot follows configured daily schedules; it cannot detect in-game spawns.");
     }
 }
 //# sourceMappingURL=views.js.map

@@ -118,3 +118,6 @@ npm run package
 ```
 
 Stop the bot before restoring. Never copy a running WAL database by copying only its main `.db` file. Never upload a database backup to Discord: it contains every guild's configuration and subscription IDs. See [RELIABILITY.md](RELIABILITY.md) for delivery guarantees and [VERIFICATION.md](VERIFICATION.md) for the test record and live acceptance checklist.
+
+## November 5 improvements
+See [UPGRADE.md](UPGRADE.md) for completed interval respawn alerts, report corrections, command-sync caching and status improvements. Interval tracking remains opt-in per guild. This update supersedes earlier startup/feature notes where they differ.
