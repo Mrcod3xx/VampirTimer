@@ -1,4 +1,4 @@
-import { Events, RESTEvents } from "discord.js";
+import { Events, RateLimitError, RESTEvents } from "discord.js";
 import { Store } from "./database/store.js";
 import { readConfig } from "./config/env.js";
 import { createClient } from "./bot/client.js";
@@ -104,13 +104,38 @@ async function main() {
     client.on(Events.ShardError, (error) => log("warn", "Discord gateway connection error", { code: errorCode(error) }));
     client.on(Events.ShardDisconnect, () => log("warn", "Discord disconnected; scheduled alerts remain bounded by their lateness window"));
     client.rest.on(RESTEvents.RateLimited, () => log("warn", "Discord rate limit reached; waiting or deferring work. Do not restart repeatedly."));
-    try {
-        await client.login(config.DISCORD_TOKEN);
-    }
-    catch (error) {
-        log("error", "Discord login failed. Check token or shared-IP restrictions; stop automatic host restarts before retrying.", { code: errorCode(error) });
-        await shutdown();
-        process.exitCode = 1;
+    const maxLoginRetries = 12;
+    let loginAttempt = 0;
+    while (!stopping) {
+        try {
+            await client.login(config.DISCORD_TOKEN);
+            break;
+        }
+        catch (error) {
+            loginAttempt++;
+            const isRateLimit = error instanceof RateLimitError ||
+                errorCode(error).includes("RateLimit") ||
+                (typeof error === "object" &&
+                    error !== null &&
+                    "status" in error &&
+                    error.status === 429);
+            if (isRateLimit && loginAttempt <= maxLoginRetries && !stopping) {
+                const timeToReset = error instanceof RateLimitError
+                    ? error.timeToReset
+                    : (error?.retryAfter ?? 30000);
+                // Wait at least 20s and cap at 5 minutes
+                const waitMs = Math.min(Math.max(timeToReset + 2000, 20000), 300000);
+                const waitSec = Math.round(waitMs / 1000);
+                log("warn", `Discord gateway login rate-limited (/gateway/bot). Backing off for ${waitSec}s before retry (${loginAttempt}/${maxLoginRetries}). Keep container running.`, { code: errorCode(error), waitSeconds: waitSec });
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+            }
+            else {
+                log("error", "Discord login failed. Check token or shared-IP restrictions; stop automatic host restarts before retrying.", { code: errorCode(error) });
+                await shutdown();
+                process.exitCode = 1;
+                break;
+            }
+        }
     }
 }
 main().catch((error) => {
