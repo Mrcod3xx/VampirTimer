@@ -271,3 +271,24 @@ it("protects report correction commands and restores the prior timer on undo", a
   await t.run("undo-report", String(b.id));
   expect(t.store.latestKillReport(G, b.id)?.report_type).toBe("defeat");
 });
+
+it("allows non-admin members to click the public 'Report Defeated' button on spawn alerts", async () => {
+  const t = setup();
+  t.store.updateSettings(G, { interval_respawn_tracking_enabled: 1 });
+  const b = t.store.bosses(G)[0]!;
+  const components = new Components(t.store);
+  const publicCustomId = components.id(G, "0", "defeated", String(b.id), true);
+
+  // Interaction coming from a non-admin member clicking the button on a public message
+  const nonAdminInteraction = t.interaction("defeated", String(b.id), "button", {
+    customId: publicCustomId,
+    memberPermissions: new PermissionsBitField(), // No administrator permissions
+    message: { flags: { has: () => false } }, // Non-ephemeral (public channel message)
+  });
+
+  await t.router.handle(nonAdminInteraction);
+  expect(nonAdminInteraction.deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+  expect(t.store.latestKillReport(G, b.id)?.report_type).toBe("defeat");
+  const editReplyPayload = nonAdminInteraction.editReply.mock.calls[0]![0];
+  expect(editReplyPayload.embeds[0].data.title).toBe("⚔️ BOSS DEFEAT RECORDED");
+});

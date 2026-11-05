@@ -23,6 +23,6 @@ A corrected or undone report can restore an old timer. Already-sent stages remai
 
 - Review the older generic-to-named-boss migration with customized guild fixtures before further migration changes.
 - Add optional per-member reminder-stage preferences.
-- Verify Discord connectivity, role hierarchy, storage persistence and sustained memory on the actual Wispbyte node once its restriction clears.
+- Verify Discord connectivity, role hierarchy, storage persistence and sustained memory on the production Azure VM via PM2.
 
 This build was tested locally; no live deployment was performed by this update.

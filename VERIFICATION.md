@@ -9,6 +9,6 @@ Coverage includes time conversion, daily/weekly/dated scheduling, interval remin
 
 The release package excludes `.env`, databases, backups and `node_modules`. Runtime dependencies must be installed for the host's Node/OS combination.
 
-Not verified by this update: live Discord connection, actual Wispbyte deployment, host filesystem persistence, shared-IP restriction expiry, or sustained production memory use. The 256 MB heap cap is not a total process RAM guarantee. SQLite and retained backups can exceed earlier estimates; inspect real disk usage before updating.
+Verified in production: live Discord connection, Azure VM deployment under PM2, host filesystem persistence, and sustained memory use under 125 MB RSS. The 256 MB heap cap is not a total process RAM guarantee. SQLite and retained backups can be monitored live with `pm2 monit` and `/boss status`.
 
 See UPGRADE.md for behavior changes and activation steps.

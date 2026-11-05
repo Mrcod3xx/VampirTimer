@@ -694,7 +694,7 @@ export class Router {
             filePath,
           );
           await success(
-            `**Verified database snapshot created:**\n\`${filePath}\`\n\nTo download, log into the Wispbyte panel, open **Files**, and navigate to \`data/backups/\`. Download the \`.db\` file safely to your computer.\n\n*Note: Backups are never sent to Discord channels to protect server security and avoid file leaks.*`,
+            `**Verified database snapshot created:**\n\`${filePath}\`\n\nTo download this backup from your Azure VM, use SCP or SFTP from your terminal:\n\`scp -i <key.pem> azureuser@<vm-ip>:${filePath} .\`\n\n*Note: Backups are stored securely on the server and never sent to Discord channels to protect server security and avoid data leaks.*`,
           );
           break;
         }

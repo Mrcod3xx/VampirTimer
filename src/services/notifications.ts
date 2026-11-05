@@ -1,7 +1,11 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   Client,
   EmbedBuilder,
+  MessageActionRowComponentBuilder,
   PermissionFlagsBits,
   escapeMarkdown,
 } from "discord.js";
@@ -9,6 +13,7 @@ import { createHash } from "node:crypto";
 import { DateTime } from "luxon";
 import { Store, type Event } from "../database/store.js";
 import { SafeRetry, type Delivery } from "./scheduler.js";
+import { Components } from "../ui/components.js";
 import {
   ZONE,
   getNextBossOccurrence,
@@ -135,10 +140,14 @@ export function scheduleText(
     : text;
 }
 export class Notifications implements Delivery {
+  readonly components: Components;
   constructor(
     readonly store: Store,
     readonly client: Client,
-  ) {}
+    components?: Components,
+  ) {
+    this.components = components ?? new Components(store);
+  }
   async channel(guildId: string, id?: string | null) {
     const channelId =
       id ?? this.store.settings(guildId).notification_channel_id;
@@ -318,9 +327,69 @@ export class Notifications implements Delivery {
       )
       .digest("hex")
       .slice(0, 24);
+    const components: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
+    if (first.minutes === 0 && s.interval_respawn_tracking_enabled) {
+      const targetEvents = events.filter((e) => e.boss_id > 0);
+      const intervalEvents = targetEvents.filter(
+        (e) =>
+          this.store.boss(first.guild_id, e.boss_id).schedule_type ===
+          "interval",
+      );
+      const eligible =
+        intervalEvents.length > 0 ? intervalEvents : targetEvents;
+
+      if (eligible.length === 1) {
+        const b = this.store.boss(first.guild_id, eligible[0]!.boss_id);
+        const btn = new ButtonBuilder()
+          .setCustomId(
+            this.components.id(
+              first.guild_id,
+              "0",
+              "defeated",
+              String(b.id),
+              true,
+            ),
+          )
+          .setLabel("⚔️ Report Defeated")
+          .setStyle(ButtonStyle.Success);
+        components.push(
+          new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+            btn,
+          ),
+        );
+      } else if (eligible.length > 1 && eligible.length <= 10) {
+        for (let i = 0; i < eligible.length; i += 5) {
+          const chunk = eligible.slice(i, i + 5);
+          const buttons = chunk.map((e) => {
+            const b = this.store.boss(first.guild_id, e.boss_id);
+            const shortName =
+              b.name.length > 20 ? b.name.slice(0, 19) + "…" : b.name;
+            return new ButtonBuilder()
+              .setCustomId(
+                this.components.id(
+                  first.guild_id,
+                  "0",
+                  "defeated",
+                  String(b.id),
+                  true,
+                ),
+              )
+              .setLabel(`⚔️ ${shortName}`)
+              .setStyle(ButtonStyle.Success);
+          });
+          components.push(
+            new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+              buttons,
+            ),
+          );
+        }
+      }
+    }
+
     try {
       const message = await channel.send({
         embeds: [embed],
+        components: components.length ? components : undefined,
         content: roleIds.map((id) => `<@&${id}>`).join(" ") || undefined,
         allowedMentions: {
           parse: [],

@@ -250,6 +250,38 @@ it("serializes paginated views and every modal within Discord component limits",
   expect(v.intervalsModal(G, U).toJSON().components).toHaveLength(2);
 });
 
+it("attaches 1-click 'Report Defeated' button to spawn alerts when interval tracking is enabled", async () => {
+  const t = setup();
+  t.store.updateSettings(G, {
+    notification_channel_id: C,
+    interval_respawn_tracking_enabled: 1,
+  });
+  const b = t.store.bosses(G)[0]!;
+  const n = new Notifications(t.store, t.client);
+  const event = {
+    event_key: `spawn:${b.id}`,
+    guild_id: G,
+    boss_id: b.id,
+    spawn_at: Date.now(),
+    minutes: 0,
+    scheduled_at: 0,
+    status: "sending",
+    attempts: 1,
+    retry_at: 0,
+  };
+  await n.send(C, [event]);
+  const call = t.channel.send.mock.calls[0]![0];
+  expect(call.components).toBeDefined();
+  expect(call.components).toHaveLength(1);
+  const button = call.components[0].components[0];
+  expect(button.data.label).toBe("⚔️ Report Defeated");
+
+  // Also verify that when minutes > 0 (e.g. 10m reminder), no defeat button is attached
+  await n.send(C, [{ ...event, minutes: 10 }]);
+  const reminderCall = t.channel.send.mock.calls[1]![0];
+  expect(reminderCall.components).toBeUndefined();
+});
+
 it("handles large simultaneous schedules and a form with no reminders", () => {
   const t = setup();
   for (let i = 0; i < 50; i++)

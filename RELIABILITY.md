@@ -42,6 +42,6 @@ Settings changes cancel pending work when reconciled. If a request has already b
 
 An old backup also restores an old notification ledger. Restoring it can forget messages sent since the snapshot. Stop the bot, restore safely, wait longer than `LATENESS_SECONDS` before restarting, and verify the current schedule and destination. A newly added or changed schedule may produce an alert whose due time is already within the configured lateness window. Late notifications preserve their stage label and show the scheduled spawn time.
 
-Hourly health logs include process RSS. The V8 heap cap is not a total RAM guarantee. Free-host persistence, actual container runtime compatibility, network restrictions and sustained memory usage must be checked on the selected Wispbyte server before relying on it.
+Hourly health logs include process RSS. The V8 heap cap is not a total RAM guarantee. Process health, PM2 status, storage persistence, and sustained memory usage can be monitored live via `pm2 status`, `pm2 logs`, and `pm2 monit`.
 
 

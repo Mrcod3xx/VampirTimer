@@ -4,9 +4,9 @@ A Discord-native boss scheduler for one bot account and multiple guilds. Daily t
 
 ## Start here
 
-Read [DEPLOYMENT.md](DEPLOYMENT.md) for the complete Wispbyte setup, Discord invitation, backups and troubleshooting. The supplied runtime archive already contains compiled JavaScript. Source code and automated tests are included in the full project archive.
+Read [DEPLOYMENT.md](DEPLOYMENT.md) for the complete Azure VM and PM2 setup, Discord invitation, backups, and maintenance.
 
-This project has been built and tested locally. **A real Discord connection and Wispbyte deployment have not been verified.** You need your own Discord application token and hosting account. Do not paste the token into chat or commit it.
+The bot runs 24/7 on **Node.js 24 LTS** on an Azure Linux VM supervised by PM2, utilizing a persistent SQLite database in WAL mode. Daily times are strictly anchored to **Philippine Time (UTC+8)** with native dynamic Discord timestamps for global guild members.
 
 ## Included behavior
 
@@ -84,7 +84,7 @@ The scheduler uses indexed due-event queries, a 30-second reconciliation interva
 
 Limits: 100 bosses per guild, 12 distinct daily times per boss, five reminder intervals of 1–180 minutes, ten bosses per notification message. Full schedules are paginated; summary messages and next-spawn lists show a bounded preview and link back to the full schedule. These bounds protect Discord's message limits and free hosting resources.
 
-The database defaults to `data/boss-tracker.db`, outside `dist/`. Its page limit is 128 MiB at the default 4 KiB page size. Manual backups retain three snapshots; restore also keeps one `*.before-restore.db`. Keep enough free space for an in-progress snapshot and download backups off-host. Exhausting the disk/database limit is an error, not a reason to reset data. Monitor `/boss status` and Wispbyte's resource panel.
+The database defaults to `data/boss-tracker.db`, outside `dist/`. Its page limit is 128 MiB at the default 4 KiB page size. Manual backups retain three snapshots; restore also keeps one `*.before-restore.db`. Keep enough free space for an in-progress snapshot and download backups off-host. Exhausting the disk/database limit is an error, not a reason to reset data. Monitor `/boss status` and `pm2 monit` on the server.
 
 ## Configuration
 

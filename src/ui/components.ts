@@ -64,7 +64,7 @@ export class Components {
       throw new UserError("This panel expired. Open /panel again.");
     if (
       owner === "0" &&
-      !["next", "schedule", "alerts", "refresh"].includes(action)
+      !["next", "schedule", "alerts", "refresh", "defeated"].includes(action)
     )
       throw new UserError("Invalid public control.");
     return { action, arg };
