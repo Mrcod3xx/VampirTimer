@@ -107,7 +107,7 @@ Installation downloads packages. Building produces JavaScript. Starting runs the
 
 Start from **Console**. A successful gateway connection produces `Boss tracker ready` with the guild count, timezone and RSS memory. No token should appear in logs. Confirm the bot is online in your guild.
 
-If configuration is invalid, correct it before restarting. Initial login failures do not trigger an application retry loop. If the host automatically restarts a failing process, stop it from the panel while fixing the underlying problem.
+If configuration is invalid, correct it before restarting. Rate-limited login attempts wait for the full reported cooldown, preserved in SQLite across restarts. Console logs show remaining seconds and a Philippine-time next-attempt timestamp; that timestamp is not a promise that the IP restriction will clear. Unknown 429 durations use increasing backoff, with at most 12 attempts per run. Invalid credentials do not retry. If the host automatically restarts a failing process, stop it from the panel while fixing the underlying problem.
 
 ## 9. Configure your guild inside Discord
 
@@ -194,3 +194,4 @@ The utility checks the source, acquires the same process lock as the bot, preser
 | Free server stopped after inactivity | Sign in normally and reactivate per provider instructions. Maintain a 14-day or shorter sign-in reminder. |
 
 See [Wispbyte's Discord Rate Limits guide](https://wispbyte.com/kb/discord-rate-limits). An IP-level restriction on a shared hosting node may be outside the developer's control. The application does not promise uninterrupted free hosting or perfect exactly-once network delivery.
+

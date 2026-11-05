@@ -26,7 +26,7 @@ This favors avoiding duplicates over guaranteeing every delivery. A crash after 
 
 Failures known to occur before acceptance, including unavailable channels, missing access/permissions and rejected rate-limited requests, receive bounded retries: at most four attempts with delays of 10, 20 and 40 seconds, and never beyond the lateness window. Library-level retries for timeout/5xx sends are disabled. Known Discord rate-limit queues are rejected to the scheduler rather than allowing stale alert requests to wait indefinitely. Interaction failures are reported privately and can be retried by the user.
 
-Gateway reconnection is handled by Discord.js. Initial login failure logs an error and exits without an application retry loop. Stop the hosting server's repeated automatic restarts if the credentials are invalid or its shared IP is restricted. Host process management is outside this application's control.
+Gateway reconnection is handled by Discord.js. Login 429 failures use at most 12 attempts, honoring the full reported delay and preserving the cooldown in SQLite across restarts. Waits cancel on shutdown. Other login failures log an error and exit. Stop the hosting server's repeated automatic restarts if the credentials are invalid or its shared IP is restricted. Host process management is outside this application's control.
 
 ## Concurrency and configuration
 
@@ -43,4 +43,5 @@ Settings changes cancel pending work when reconciled. If a request has already b
 An old backup also restores an old notification ledger. Restoring it can forget messages sent since the snapshot. Stop the bot, restore safely, wait longer than `LATENESS_SECONDS` before restarting, and verify the current schedule and destination. A newly added or changed schedule may produce an alert whose due time is already within the configured lateness window. Late notifications preserve their stage label and show the scheduled spawn time.
 
 Hourly health logs include process RSS. The V8 heap cap is not a total RAM guarantee. Free-host persistence, actual container runtime compatibility, network restrictions and sustained memory usage must be checked on the selected Wispbyte server before relying on it.
+
 

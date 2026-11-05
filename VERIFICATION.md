@@ -78,3 +78,7 @@ The build output was validated through:
 1. `npm run build`: Compiles all TypeScript files in `src/` to `dist/` with target ES2022 and NodeNext module resolution.
 2. `npm run package`: Generates `release/wispbyte-boss-tracker.tar.gz` containing only runtime artifacts (`dist/`, `package.json`, `package-lock.json`, `.env.example`, and documentation).
 3. Secrets protection: Zero hardcoded tokens or live `.env` files are ever packaged or committed.
+
+## November 5, 2026 — login cooldown update
+Typecheck and build passed. All 78 tests across 9 files passed, including five new login cooldown/restart/shutdown tests. The earlier report above is historical. No live Wispbyte connection or IP unblock was verified.
+
