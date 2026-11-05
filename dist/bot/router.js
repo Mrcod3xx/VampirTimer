@@ -48,12 +48,17 @@ export class Router {
     store;
     views;
     notifications;
+    cooldownMs;
+    now;
     subscriptions;
     publicPanel;
-    constructor(store, views, notifications) {
+    cooldowns = new Map();
+    constructor(store, views, notifications, cooldownMs = 0, now = Date.now) {
         this.store = store;
         this.views = views;
         this.notifications = notifications;
+        this.cooldownMs = cooldownMs;
+        this.now = now;
         this.subscriptions = new Subscriptions(store);
         this.publicPanel = new PublicPanel(notifications, views);
     }
@@ -83,6 +88,26 @@ export class Router {
             }
             if (!i.isRepliable())
                 return;
+            if (this.cooldownMs > 0) {
+                const last = this.cooldowns.get(i.user.id) ?? 0;
+                const current = this.now();
+                if (current - last < this.cooldownMs) {
+                    if (!i.replied && !i.deferred) {
+                        await i.reply({
+                            content: "⏳ Slow down! Please wait a moment before sending another action.",
+                            flags: MessageFlags.Ephemeral,
+                        });
+                    }
+                    return;
+                }
+                this.cooldowns.set(i.user.id, current);
+                if (this.cooldowns.size > 2000) {
+                    for (const [uid, timestamp] of this.cooldowns.entries()) {
+                        if (current - timestamp > 60_000)
+                            this.cooldowns.delete(uid);
+                    }
+                }
+            }
             let action;
             let arg = "";
             if (i.isChatInputCommand()) {
@@ -108,7 +133,7 @@ export class Router {
                         const filter = i.options.getString("filter") || "all";
                         arg = `${filter}:0`;
                     }
-                    else if (["defeated", "alive", "undo-report"].includes(action)) {
+                    else if (["defeated", "alive", "undo-report", "search"].includes(action)) {
                         arg = String(i.options.getInteger("boss") ?? "");
                     }
                 }
@@ -207,6 +232,7 @@ export class Router {
                 case "choose":
                     await respond(this.views.schedule(g, u, Number(arg) || 0, action));
                     break;
+                case "search":
                 case "viewBossDetail": {
                     const bossId = Number(arg || (i.isStringSelectMenu() && i.values[0]));
                     if (!bossId)

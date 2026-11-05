@@ -1289,7 +1289,7 @@ export class Views {
   help() {
     return this.view(
       "📖 BOSS TRACKER HELP",
-      "**Members**\n/panel — dashboard\n/boss next · countdown — next spawn\n/boss schedule · list — all bosses\n/boss alerts — your preferences\n/boss subscribe [boss] — opt in (omit boss for all)\n/boss unsubscribe [boss] — opt out (omit boss for all)\n\n**Administrators**\n/add boss · /edit boss · /remove boss\n/set channel — notification destination\n/boss setup — settings and roles\n/boss test — test without mentions\n/boss publish — public schedule\n/boss status — recent delivery status\n/boss alive · /boss undo-report — administrator report corrections\n\nThis bot follows configured daily schedules; it cannot detect in-game spawns.",
+      "**Members**\n/panel — dashboard\n/boss next · countdown — next spawn\n/boss schedule · list — all bosses\n/boss search [boss] — search & view boss details\n/boss alerts — your preferences\n/boss subscribe [boss] — opt in (omit boss for all)\n/boss unsubscribe [boss] — opt out (omit boss for all)\n\n**Administrators**\n/add boss · /edit boss · /remove boss\n/set channel — notification destination\n/boss setup — settings and roles\n/boss test — test without mentions\n/boss publish — public schedule\n/boss status — recent delivery status\n/boss alive · /boss undo-report — administrator report corrections\n\nThis bot follows configured daily schedules; it cannot detect in-game spawns.",
     );
   }
 }

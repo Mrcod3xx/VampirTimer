@@ -66,10 +66,13 @@ const adminActions = new Set([
 export class Router {
   readonly subscriptions: Subscriptions;
   readonly publicPanel: PublicPanel;
+  private readonly cooldowns = new Map<string, number>();
   constructor(
     readonly store: Store,
     readonly views: Views,
     readonly notifications: Notifications,
+    readonly cooldownMs: number = 0,
+    readonly now: () => number = Date.now,
   ) {
     this.subscriptions = new Subscriptions(store);
     this.publicPanel = new PublicPanel(notifications, views);
@@ -103,6 +106,25 @@ export class Router {
         return;
       }
       if (!i.isRepliable()) return;
+      if (this.cooldownMs > 0) {
+        const last = this.cooldowns.get(i.user.id) ?? 0;
+        const current = this.now();
+        if (current - last < this.cooldownMs) {
+          if (!i.replied && !i.deferred) {
+            await i.reply({
+              content: "⏳ Slow down! Please wait a moment before sending another action.",
+              flags: MessageFlags.Ephemeral,
+            });
+          }
+          return;
+        }
+        this.cooldowns.set(i.user.id, current);
+        if (this.cooldowns.size > 2000) {
+          for (const [uid, timestamp] of this.cooldowns.entries()) {
+            if (current - timestamp > 60_000) this.cooldowns.delete(uid);
+          }
+        }
+      }
       let action: string;
       let arg = "";
       if (i.isChatInputCommand()) {
@@ -126,7 +148,9 @@ export class Router {
           else if (action === "audit") {
             const filter = i.options.getString("filter") || "all";
             arg = `${filter}:0`;
-          } else if (["defeated", "alive", "undo-report"].includes(action)) {
+          } else if (
+            ["defeated", "alive", "undo-report", "search"].includes(action)
+          ) {
             arg = String(i.options.getInteger("boss") ?? "");
           }
         } else throw new UserError("Unknown command. Use /boss help.");
@@ -227,6 +251,7 @@ export class Router {
         case "choose":
           await respond(this.views.schedule(g, u, Number(arg) || 0, action));
           break;
+        case "search":
         case "viewBossDetail": {
           const bossId = Number(arg || (i.isStringSelectMenu() && i.values[0]));
           if (!bossId) throw new UserError("Select a boss.");

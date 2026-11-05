@@ -17,7 +17,7 @@ async function main() {
     const store = new Store(config.DATABASE_PATH);
     const client = createClient();
     const notifications = new Notifications(store, client);
-    const router = new Router(store, new Views(store, new Components(store)), notifications);
+    const router = new Router(store, new Views(store, new Components(store)), notifications, 1000);
     const scheduler = new Scheduler(store, notifications, () => [...client.guilds.cache.keys()], Date.now, config.LATENESS_SECONDS * 1000, config.HISTORY_DAYS);
     const loginAbort = new AbortController();
     let stopping = false;

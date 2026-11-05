@@ -326,3 +326,59 @@ it("allows non-admin members to click the public 'Report Defeated' button on spa
   await t.router.handle(secondInteraction);
   expect(secondInteraction.editReply.mock.calls[0]![0].content).toContain("already reported");
 });
+
+it("searches and returns member boss card for /boss search", async () => {
+  const t = setup();
+  const b = t.store.bosses(G)[0]!;
+  const interaction = t.interaction("search", "", "command", {
+    commandName: "boss",
+    options: {
+      getSubcommand: () => "search",
+      getInteger: (name: string) => (name === "boss" ? b.id : null),
+    },
+  });
+  await t.router.handle(interaction);
+  expect(interaction.deferReply).toHaveBeenCalledWith({ flags: MessageFlags.Ephemeral });
+  const reply = interaction.editReply.mock.calls[0]![0];
+  expect(reply.embeds[0].data.title).toContain(b.name);
+});
+
+it("enforces cooldown when cooldownMs is set", async () => {
+  let currentTime = 1000;
+  const t = setup();
+  const rateLimitedRouter = new Router(
+    t.store,
+    t.views,
+    t.router.notifications,
+    1000,
+    () => currentTime,
+  );
+  const first = t.interaction("help", "", "command", {
+    commandName: "boss",
+    options: { getSubcommand: () => "help" },
+  });
+  await rateLimitedRouter.handle(first);
+  expect(first.deferReply).toHaveBeenCalled();
+
+  // Rapid second action from same user within cooldownMs
+  currentTime += 500;
+  const second = t.interaction("help", "", "command", {
+    commandName: "boss",
+    options: { getSubcommand: () => "help" },
+  });
+  await rateLimitedRouter.handle(second);
+  expect(second.reply).toHaveBeenCalledWith({
+    content: "⏳ Slow down! Please wait a moment before sending another action.",
+    flags: MessageFlags.Ephemeral,
+  });
+  expect(second.deferReply).not.toHaveBeenCalled();
+
+  // Action after cooldown expires succeeds
+  currentTime += 1001;
+  const third = t.interaction("help", "", "command", {
+    commandName: "boss",
+    options: { getSubcommand: () => "help" },
+  });
+  await rateLimitedRouter.handle(third);
+  expect(third.deferReply).toHaveBeenCalled();
+});

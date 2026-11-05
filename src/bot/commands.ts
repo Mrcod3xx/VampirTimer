@@ -71,6 +71,18 @@ export const commands = [
     .addSubcommand((s) =>
       s.setName("countdown").setDescription("Countdown to the next spawn"),
     )
+    .addSubcommand((s) =>
+      s
+        .setName("search")
+        .setDescription("Search for a boss to view its schedule and alerts")
+        .addIntegerOption((o) =>
+          o
+            .setName("boss")
+            .setDescription("Select or search a boss")
+            .setRequired(true)
+            .setAutocomplete(true),
+        ),
+    )
     .addSubcommand((s) => s.setName("list").setDescription("List all bosses"))
     .addSubcommand((s) =>
       s.setName("alerts").setDescription("Manage your opt-in alerts"),

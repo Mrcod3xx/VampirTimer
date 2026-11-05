@@ -22,6 +22,7 @@ async function main() {
     store,
     new Views(store, new Components(store)),
     notifications,
+    1000,
   );
   const scheduler = new Scheduler(
     store,

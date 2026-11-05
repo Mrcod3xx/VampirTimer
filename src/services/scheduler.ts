@@ -225,6 +225,9 @@ export class Scheduler {
     if (now - this.cleanedAt > 3_600_000) {
       this.store.cleanupLogs(now, this.historyDays);
       db.pragma("wal_checkpoint(PASSIVE)");
+      try {
+        db.pragma("optimize");
+      } catch {}
       this.cleanedAt = now;
       log("info", "Scheduler health", {
         rssMB: Math.round(process.memoryUsage().rss / 1048576),
