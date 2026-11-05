@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/database/store.js";
+import { Scheduler } from "../src/services/scheduler.js";
 import {
   backup,
   restore,
@@ -99,4 +100,32 @@ it("keeps a sent notification ledger across an actual SQLite close and reopen", 
   restarted.recover();
   await restarted.tick();
   expect(sent).toBe(1);
+});
+
+it("runs automated daily backup, updates metadata, records audit log, and enforces 24h cooldown", async () => {
+  const customBackupDir = join(dir, "auto-backups");
+  let now = Date.now() + 10_000;
+  const scheduler = new Scheduler(
+    store,
+    { prepare: async () => "c", send: async () => "m" },
+    () => ["a"],
+    () => now,
+  );
+  // First run creates backup
+  const path1 = await scheduler.runAutoBackup(now, customBackupDir);
+  expect(path1).not.toBeNull();
+  expect(store.getMetadata("last_auto_backup")).toBe(String(now));
+  expect(store.auditLogs("a").some((l) => l.action_type === "backup_auto")).toBe(true);
+
+  // Running again 1 hour later (less than 24h) does not create duplicate backup
+  now += 3600000;
+  const path2 = await scheduler.runAutoBackup(now, customBackupDir);
+  expect(path2).toBeNull();
+
+  // Running 24 hours later creates the next daily backup
+  now += 86400000;
+  const path3 = await scheduler.runAutoBackup(now, customBackupDir);
+  expect(path3).not.toBeNull();
+  expect(path3).not.toBe(path1);
+  expect(store.getMetadata("last_auto_backup")).toBe(String(now));
 });

@@ -93,6 +93,7 @@ export function verifyDatabase(path: string) {
 export async function backup(
   store: Store,
   directory = join(dirname(resolve(store.path)), "backups"),
+  maxBackups = 3,
 ) {
   mkdirSync(directory, { recursive: true });
   const path = join(
@@ -105,7 +106,7 @@ export async function backup(
     .filter((n) => /^boss-tracker-\d+-[a-f0-9]{6}\.db$/.test(n))
     .map((name) => ({ name, time: statSync(join(directory, name)).mtimeMs }))
     .sort((a, b) => b.time - a.time);
-  for (const file of files.slice(3)) unlinkSync(join(directory, file.name));
+  for (const file of files.slice(maxBackups)) unlinkSync(join(directory, file.name));
   return path;
 }
 export async function restore(source: string, target: string) {

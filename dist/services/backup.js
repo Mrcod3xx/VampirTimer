@@ -70,7 +70,7 @@ export function verifyDatabase(path) {
         db.close();
     }
 }
-export async function backup(store, directory = join(dirname(resolve(store.path)), "backups")) {
+export async function backup(store, directory = join(dirname(resolve(store.path)), "backups"), maxBackups = 3) {
     mkdirSync(directory, { recursive: true });
     const path = join(directory, `boss-tracker-${Date.now()}-${randomBytes(3).toString("hex")}.db`);
     await store.db.backup(path);
@@ -79,7 +79,7 @@ export async function backup(store, directory = join(dirname(resolve(store.path)
         .filter((n) => /^boss-tracker-\d+-[a-f0-9]{6}\.db$/.test(n))
         .map((name) => ({ name, time: statSync(join(directory, name)).mtimeMs }))
         .sort((a, b) => b.time - a.time);
-    for (const file of files.slice(3))
+    for (const file of files.slice(maxBackups))
         unlinkSync(join(directory, file.name));
     return path;
 }

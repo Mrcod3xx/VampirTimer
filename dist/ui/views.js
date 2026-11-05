@@ -512,6 +512,7 @@ export class Views {
             schedule_publish: "📢 Schedule Published",
             panel_reset: "🔄 Panel Reset",
             backup_create: "💾 Backup Created",
+            backup_auto: "💾 Automated Backup",
         };
         const lines = logs.map((log) => {
             const timeSec = toUnixSeconds(log.created_at);

@@ -434,5 +434,16 @@ export class Store {
             .prepare("DELETE FROM notification_logs WHERE scheduled_at < ? AND error_message IS NOT NULL AND status NOT IN ('pending', 'sending')")
             .run(errorCutoff);
     }
+    getMetadata(key) {
+        const row = this.db
+            .prepare("SELECT value FROM metadata WHERE key=?")
+            .get(key);
+        return row?.value;
+    }
+    setMetadata(key, value) {
+        this.db
+            .prepare("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            .run(key, value);
+    }
 }
 //# sourceMappingURL=store.js.map

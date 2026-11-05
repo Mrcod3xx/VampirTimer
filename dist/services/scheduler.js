@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
 import { atTime, isBossDueOnDay, ZONE } from "../utils/time.js";
 import { errorCode, log } from "../utils/logger.js";
+import { backup } from "./backup.js";
 export function stages(s) {
     const reminders = JSON.parse(s.reminder_minutes).filter((n) => (n !== 30 || s.reminder_30_enabled) &&
         (n !== 10 || s.reminder_10_enabled));
@@ -56,6 +57,27 @@ export class Scheduler {
         this.store.db
             .prepare("UPDATE notification_logs SET status='uncertain',error_message='Process stopped during send; not resent' WHERE status='sending'")
             .run();
+    }
+    async runAutoBackup(now = this.clock(), customDir) {
+        if (this.store.path === ":memory:" && !customDir)
+            return null;
+        const lastBackupStr = this.store.getMetadata("last_auto_backup");
+        const lastBackup = lastBackupStr ? Number(lastBackupStr) : 0;
+        if (now - lastBackup >= 86_400_000) {
+            try {
+                const backupPath = await backup(this.store, customDir, 7);
+                this.store.setMetadata("last_auto_backup", String(now));
+                for (const guildId of this.guildIds()) {
+                    this.store.addAuditLog(guildId, "system", "backup_auto", "system", null, null, backupPath, now);
+                }
+                log("info", "Automated daily backup completed", { path: backupPath });
+                return backupPath;
+            }
+            catch (err) {
+                log("error", "Automated backup failed", { code: errorCode(err) });
+            }
+        }
+        return null;
     }
     reconcile(now) {
         const db = this.store.db;
@@ -146,6 +168,7 @@ export class Scheduler {
                 rssMB: Math.round(process.memoryUsage().rss / 1048576),
                 guilds: this.guildIds().length,
             });
+            await this.runAutoBackup(now);
         }
         const connected = new Set(this.guildIds());
         const due = db
