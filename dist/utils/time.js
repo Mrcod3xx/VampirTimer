@@ -220,9 +220,32 @@ export function nextSpawn(bosses, now, intervalTrackingEnabled = false) {
     if (!candidates.length)
         return null;
     const at = Math.min(...candidates.map((c) => c.at));
-    return Number.isFinite(at)
-        ? { at, bosses: candidates.filter((c) => c.at === at).map((c) => c.boss) }
-        : null;
+    if (!Number.isFinite(at))
+        return null;
+    const matching = candidates.filter((c) => c.at === at);
+    const seen = new Set();
+    const uniqueBosses = [];
+    for (const { boss } of matching) {
+        if (!seen.has(boss.id)) {
+            seen.add(boss.id);
+            uniqueBosses.push(boss);
+        }
+    }
+    return { at, bosses: uniqueBosses };
+}
+export function upcomingSpawnWaves(bosses, now, limit = 3, intervalTrackingEnabled = false) {
+    const waves = [];
+    let searchNow = now;
+    for (let i = 0; i < limit; i++) {
+        const wave = nextSpawn(bosses, searchNow, intervalTrackingEnabled);
+        if (!wave)
+            break;
+        if (waves.length > 0 && wave.at <= waves[waves.length - 1].at)
+            break;
+        waves.push(wave);
+        searchNow = wave.at + 60_000;
+    }
+    return waves;
 }
 export function calculateBossRespawnStatus(boss, latestReport, now = Date.now()) {
     const intervalMinutes = boss.respawn_interval_minutes ?? 0;

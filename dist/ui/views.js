@@ -2,7 +2,7 @@ import { validEvent } from "../services/scheduler.js";
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, EmbedBuilder, ModalBuilder, RoleSelectMenuBuilder, StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown, } from "discord.js";
 import { DateTime } from "luxon";
 import { settingToggles, } from "../database/store.js";
-import { ZONE, calculateBossRespawnStatus, formatTime, formatWeeklyDays, getNextBossOccurrence, groupBossesByTierAndLevel, nextSpawn, toUnixSeconds, zoneLabel, } from "../utils/time.js";
+import { ZONE, calculateBossRespawnStatus, formatTime, formatWeeklyDays, getNextBossOccurrence, groupBossesByTierAndLevel, nextSpawn, upcomingSpawnWaves, toUnixSeconds, zoneLabel, } from "../utils/time.js";
 export const row = (...components) => new ActionRowBuilder().addComponents(components);
 const labels = {
     notifications_enabled: "All notifications",
@@ -104,12 +104,14 @@ export class Views {
         ], 0x5865f2);
     }
     next(g, u) {
-        const next = nextSpawn(this.store.bosses(g), this.now(), Boolean(this.store.settings(g).interval_respawn_tracking_enabled));
-        if (!next) {
+        const intervalEnabled = Boolean(this.store.settings(g).interval_respawn_tracking_enabled);
+        const waves = upcomingSpawnWaves(this.store.bosses(g), this.now(), 3, intervalEnabled);
+        if (!waves.length) {
             return this.view("⏳ NEXT BOSS SPAWN", "No active schedules.", [
                 row(this.button(g, u, "next", "Refresh"), this.button(g, u, "schedule", "Full Schedule", "0"), this.back(g, u, "main")),
             ], 0x8b5cf6);
         }
+        const next = waves[0];
         const sec = toUnixSeconds(next.at);
         const { oneStar, twoStar, other } = groupBossesByTierAndLevel(next.bosses);
         const bossSections = [];
@@ -139,11 +141,46 @@ export class Views {
             }
             bossSections.push("");
         }
+        const timelineSections = [];
+        if (waves.length > 1) {
+            timelineSections.push("━━━━━━━━━━━━━━━━━━━━");
+            timelineSections.push("**Upcoming Waves Timeline**");
+            for (let i = 1; i < waves.length; i++) {
+                const wave = waves[i];
+                const waveSec = toUnixSeconds(wave.at);
+                const waveNumber = i + 1;
+                const waveGrouping = groupBossesByTierAndLevel(wave.bosses);
+                const summaries = [];
+                if (waveGrouping.oneStar.count > 0) {
+                    const names = waveGrouping.oneStar.groups
+                        .flatMap((g) => g.names)
+                        .map((x) => escapeMarkdown(x))
+                        .join(", ");
+                    summaries.push(`⭐ **1★ (${waveGrouping.oneStar.count}):** ${names}`);
+                }
+                if (waveGrouping.twoStar.count > 0) {
+                    const names = waveGrouping.twoStar.groups
+                        .flatMap((g) => g.names)
+                        .map((x) => escapeMarkdown(x))
+                        .join(", ");
+                    summaries.push(`⭐⭐ **2★ (${waveGrouping.twoStar.count}):** ${names}`);
+                }
+                if (waveGrouping.other.count > 0) {
+                    const names = waveGrouping.other.groups
+                        .flatMap((g) => g.names)
+                        .map((x) => escapeMarkdown(x))
+                        .join(", ");
+                    summaries.push(`**Other (${waveGrouping.other.count}):** ${names}`);
+                }
+                timelineSections.push(`🌊 **Wave ${waveNumber}** · <t:${waveSec}:t> (<t:${waveSec}:R>)`, ...summaries.map((s) => `> ${s}`), "");
+            }
+        }
         const rawDesc = [
             `> 🌐 **Your Local Time:** <t:${sec}:t>`,
             `> ⏱️ **Starts:** <t:${sec}:R>\n`,
             `**Scheduled Bosses (${next.bosses.length})**`,
             bossSections.join("\n").trim(),
+            ...timelineSections,
         ].join("\n");
         const desc = rawDesc.length > 4000 ? `${rawDesc.slice(0, 3950)}…` : rawDesc;
         const v = this.view("⏳ NEXT BOSS SPAWN", desc, [
@@ -155,14 +192,25 @@ export class Views {
         return v;
     }
     countdown(g, u) {
-        const next = nextSpawn(this.store.bosses(g), this.now(), Boolean(this.store.settings(g).interval_respawn_tracking_enabled));
-        if (!next) {
+        const intervalEnabled = Boolean(this.store.settings(g).interval_respawn_tracking_enabled);
+        const waves = upcomingSpawnWaves(this.store.bosses(g), this.now(), 3, intervalEnabled);
+        if (!waves.length) {
             return this.view("⏳ NEXT BOSS COUNTDOWN", "No upcoming bosses scheduled.", [
                 row(this.button(g, u, "countdown", "Refresh"), this.button(g, u, "schedule", "Full Schedule", "0"), this.back(g, u, "main")),
             ], 0x8b5cf6);
         }
+        const next = waves[0];
         const sec = toUnixSeconds(next.at);
         const { oneStar, twoStar, other } = groupBossesByTierAndLevel(next.bosses);
+        const timelineSummary = [];
+        if (waves.length > 1) {
+            timelineSummary.push("", "━━━━━━━━━━━━━━━━━━━━", "**Later Waves:**");
+            for (let i = 1; i < waves.length; i++) {
+                const wave = waves[i];
+                const waveSec = toUnixSeconds(wave.at);
+                timelineSummary.push(`> 🌊 **Wave ${i + 1}:** <t:${waveSec}:t> (<t:${waveSec}:R>) • ${wave.bosses.length} bosses`);
+            }
+        }
         const desc = [
             `**Countdown:** <t:${sec}:R>`,
             `**Starts:** <t:${sec}:t>`,
@@ -170,6 +218,7 @@ export class Views {
             oneStar.count > 0 ? `⭐ **1-Star:** ${oneStar.count} bosses` : "",
             twoStar.count > 0 ? `⭐⭐ **2-Star:** ${twoStar.count} bosses` : "",
             other.count > 0 ? `**Other:** ${other.count} bosses` : "",
+            ...timelineSummary,
         ]
             .filter(Boolean)
             .join("\n");

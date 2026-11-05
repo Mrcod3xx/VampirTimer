@@ -33,6 +33,7 @@ import {
   getNextBossOccurrence,
   groupBossesByTierAndLevel,
   nextSpawn,
+  upcomingSpawnWaves,
   toUnixSeconds,
   zoneLabel,
 } from "../utils/time.js";
@@ -239,12 +240,16 @@ export class Views {
     );
   }
   next(g: string, u: string) {
-    const next = nextSpawn(
+    const intervalEnabled = Boolean(
+      this.store.settings(g).interval_respawn_tracking_enabled,
+    );
+    const waves = upcomingSpawnWaves(
       this.store.bosses(g),
       this.now(),
-      Boolean(this.store.settings(g).interval_respawn_tracking_enabled),
+      3,
+      intervalEnabled,
     );
-    if (!next) {
+    if (!waves.length) {
       return this.view(
         "⏳ NEXT BOSS SPAWN",
         "No active schedules.",
@@ -258,6 +263,7 @@ export class Views {
         0x8b5cf6,
       );
     }
+    const next = waves[0]!;
     const sec = toUnixSeconds(next.at);
     const { oneStar, twoStar, other } = groupBossesByTierAndLevel(next.bosses);
     const bossSections: string[] = [];
@@ -298,11 +304,53 @@ export class Views {
       bossSections.push("");
     }
 
+    const timelineSections: string[] = [];
+    if (waves.length > 1) {
+      timelineSections.push("━━━━━━━━━━━━━━━━━━━━");
+      timelineSections.push("**Upcoming Waves Timeline**");
+      for (let i = 1; i < waves.length; i++) {
+        const wave = waves[i]!;
+        const waveSec = toUnixSeconds(wave.at);
+        const waveNumber = i + 1;
+        const waveGrouping = groupBossesByTierAndLevel(wave.bosses);
+        const summaries: string[] = [];
+
+        if (waveGrouping.oneStar.count > 0) {
+          const names = waveGrouping.oneStar.groups
+            .flatMap((g) => g.names)
+            .map((x) => escapeMarkdown(x))
+            .join(", ");
+          summaries.push(`⭐ **1★ (${waveGrouping.oneStar.count}):** ${names}`);
+        }
+        if (waveGrouping.twoStar.count > 0) {
+          const names = waveGrouping.twoStar.groups
+            .flatMap((g) => g.names)
+            .map((x) => escapeMarkdown(x))
+            .join(", ");
+          summaries.push(`⭐⭐ **2★ (${waveGrouping.twoStar.count}):** ${names}`);
+        }
+        if (waveGrouping.other.count > 0) {
+          const names = waveGrouping.other.groups
+            .flatMap((g) => g.names)
+            .map((x) => escapeMarkdown(x))
+            .join(", ");
+          summaries.push(`**Other (${waveGrouping.other.count}):** ${names}`);
+        }
+
+        timelineSections.push(
+          `🌊 **Wave ${waveNumber}** · <t:${waveSec}:t> (<t:${waveSec}:R>)`,
+          ...summaries.map((s) => `> ${s}`),
+          "",
+        );
+      }
+    }
+
     const rawDesc = [
       `> 🌐 **Your Local Time:** <t:${sec}:t>`,
       `> ⏱️ **Starts:** <t:${sec}:R>\n`,
       `**Scheduled Bosses (${next.bosses.length})**`,
       bossSections.join("\n").trim(),
+      ...timelineSections,
     ].join("\n");
 
     const desc = rawDesc.length > 4000 ? `${rawDesc.slice(0, 3950)}…` : rawDesc;
@@ -325,12 +373,16 @@ export class Views {
     return v;
   }
   countdown(g: string, u: string) {
-    const next = nextSpawn(
+    const intervalEnabled = Boolean(
+      this.store.settings(g).interval_respawn_tracking_enabled,
+    );
+    const waves = upcomingSpawnWaves(
       this.store.bosses(g),
       this.now(),
-      Boolean(this.store.settings(g).interval_respawn_tracking_enabled),
+      3,
+      intervalEnabled,
     );
-    if (!next) {
+    if (!waves.length) {
       return this.view(
         "⏳ NEXT BOSS COUNTDOWN",
         "No upcoming bosses scheduled.",
@@ -345,8 +397,21 @@ export class Views {
       );
     }
 
+    const next = waves[0]!;
     const sec = toUnixSeconds(next.at);
     const { oneStar, twoStar, other } = groupBossesByTierAndLevel(next.bosses);
+
+    const timelineSummary: string[] = [];
+    if (waves.length > 1) {
+      timelineSummary.push("", "━━━━━━━━━━━━━━━━━━━━", "**Later Waves:**");
+      for (let i = 1; i < waves.length; i++) {
+        const wave = waves[i]!;
+        const waveSec = toUnixSeconds(wave.at);
+        timelineSummary.push(
+          `> 🌊 **Wave ${i + 1}:** <t:${waveSec}:t> (<t:${waveSec}:R>) • ${wave.bosses.length} bosses`,
+        );
+      }
+    }
 
     const desc = [
       `**Countdown:** <t:${sec}:R>`,
@@ -355,6 +420,7 @@ export class Views {
       oneStar.count > 0 ? `⭐ **1-Star:** ${oneStar.count} bosses` : "",
       twoStar.count > 0 ? `⭐⭐ **2-Star:** ${twoStar.count} bosses` : "",
       other.count > 0 ? `**Other:** ${other.count} bosses` : "",
+      ...timelineSummary,
     ]
       .filter(Boolean)
       .join("\n");

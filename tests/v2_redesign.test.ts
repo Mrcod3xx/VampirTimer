@@ -10,6 +10,7 @@ import {
   getTodayOccurrence,
   groupBossesByTierAndLevel,
   toUnixSeconds,
+  upcomingSpawnWaves,
 } from "../src/utils/time.js";
 import { Store } from "../src/database/store.js";
 import { Views } from "../src/ui/views.js";
@@ -291,5 +292,32 @@ describe("Gehenna Boss Tracker V2 Redesign & Dynamic Timestamps", () => {
     expect(alertsView.embeds[0]!.data.description).toContain("Alert Status:** 🟢 Enabled");
     expect(alertsView.embeds[0]!.data.description).toContain("1-Star Bosses (1)");
     expect(alertsView.embeds[0]!.data.description).toContain("Mildis");
+  });
+
+  it("calculates multi-boss upcoming spawn waves and renders wave timeline in views.next and countdown", () => {
+    const store = new Store(":memory:");
+    store.initGuild(G);
+    const mockTime = DateTime.fromISO("2026-11-02T10:00:00", { zone: ZONE }).toMillis();
+    const views = new Views(store, new Components(store), undefined, () => mockTime);
+
+    // Compute waves directly
+    const waves = upcomingSpawnWaves(store.bosses(G), mockTime, 3, false);
+    expect(waves.length).toBeGreaterThan(1);
+    expect(waves[0]!.at).toBeLessThan(waves[1]!.at);
+    if (waves.length > 2) {
+      expect(waves[1]!.at).toBeLessThan(waves[2]!.at);
+    }
+
+    // Verify views.next() includes Upcoming Waves Timeline with wave indicators
+    const nextView = views.next(G, U);
+    expect(nextView.embeds[0]!.data.title).toBe("⏳ NEXT BOSS SPAWN");
+    expect(nextView.embeds[0]!.data.description).toContain("Upcoming Waves Timeline");
+    expect(nextView.embeds[0]!.data.description).toContain("🌊 **Wave 2**");
+
+    // Verify views.countdown() includes Later Waves summary
+    const countdownView = views.countdown(G, U);
+    expect(countdownView.embeds[0]!.data.title).toBe("⏳ NEXT BOSS COUNTDOWN");
+    expect(countdownView.embeds[0]!.data.description).toContain("Later Waves:");
+    expect(countdownView.embeds[0]!.data.description).toContain("🌊 **Wave 2:**");
   });
 });

@@ -267,11 +267,16 @@ export interface TimedBoss {
   respawn_trigger_type?: string | null;
 }
 
+export interface SpawnWave {
+  at: number;
+  bosses: TimedBoss[];
+}
+
 export function nextSpawn(
   bosses: TimedBoss[],
   now: number,
   intervalTrackingEnabled = false,
-) {
+): SpawnWave | null {
   const candidates = bosses
     .filter((b) => b.enabled)
     .flatMap((boss) =>
@@ -291,9 +296,37 @@ export function nextSpawn(
 
   if (!candidates.length) return null;
   const at = Math.min(...candidates.map((c) => c.at));
-  return Number.isFinite(at)
-    ? { at, bosses: candidates.filter((c) => c.at === at).map((c) => c.boss) }
-    : null;
+  if (!Number.isFinite(at)) return null;
+  const matching = candidates.filter((c) => c.at === at);
+  const seen = new Set<number>();
+  const uniqueBosses: TimedBoss[] = [];
+  for (const { boss } of matching) {
+    if (!seen.has(boss.id)) {
+      seen.add(boss.id);
+      uniqueBosses.push(boss);
+    }
+  }
+  return { at, bosses: uniqueBosses };
+}
+
+export function upcomingSpawnWaves(
+  bosses: TimedBoss[],
+  now: number,
+  limit = 3,
+  intervalTrackingEnabled = false,
+): SpawnWave[] {
+  const waves: SpawnWave[] = [];
+  let searchNow = now;
+
+  for (let i = 0; i < limit; i++) {
+    const wave = nextSpawn(bosses, searchNow, intervalTrackingEnabled);
+    if (!wave) break;
+    if (waves.length > 0 && wave.at <= waves[waves.length - 1]!.at) break;
+    waves.push(wave);
+    searchNow = wave.at + 60_000;
+  }
+
+  return waves;
 }
 
 export type BossRespawnStatus =
