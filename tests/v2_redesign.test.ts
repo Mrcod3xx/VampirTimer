@@ -267,4 +267,29 @@ describe("Gehenna Boss Tracker V2 Redesign & Dynamic Timestamps", () => {
     const labels = memberView.components[0]!.components.map((c) => (c.toJSON() as any).label);
     expect(labels).toContain("Back to Directory");
   });
+
+  it("renders choose alerts with tier emojis, role indicators, and tier-grouped alert subscriptions", () => {
+    const store = new Store(":memory:");
+    store.initGuild(G);
+    const b = store.bosses(G)[0]!;
+    store.db.prepare("INSERT INTO boss_alert_roles(guild_id,boss_id,role_id) VALUES (?,?,?)").run(G, b.id, "999888777");
+
+    const views = new Views(store, new Components(store));
+
+    // 1. In choose mode, select menu shows role status and tier emoji
+    const chooseView = views.schedule(G, U, 0, "choose");
+    expect(chooseView.embeds[0]!.data.title).toBe("🔔 SELECT A BOSS");
+    const selectMenu = chooseView.components[0]!.components[0]!.toJSON() as any;
+    expect(selectMenu.placeholder).toContain("Select a boss to manage alerts");
+    const optionWithRole = selectMenu.options.find((o: any) => o.value === String(b.id));
+    expect(optionWithRole.description).toContain("🔔 Role set");
+    expect(optionWithRole.label).toContain(b.name);
+
+    // 2. In alerts view, individual subscriptions are categorized by star tier
+    const alertsView = views.alerts(G, U, new Set(["999888777"]));
+    expect(alertsView.embeds[0]!.data.title).toBe("🔔 MY BOSS ALERTS");
+    expect(alertsView.embeds[0]!.data.description).toContain("Alert Status:** 🟢 Enabled");
+    expect(alertsView.embeds[0]!.data.description).toContain("1-Star Bosses (1)");
+    expect(alertsView.embeds[0]!.data.description).toContain("Mildis");
+  });
 });

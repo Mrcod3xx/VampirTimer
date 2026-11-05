@@ -386,6 +386,13 @@ export class Views {
     const rows: View["components"] = [];
 
     if (visible.length) {
+      const placeholder =
+        mode === "choose"
+          ? "🔔 Select a boss to manage alerts..."
+          : mode === "manage"
+            ? "Choose a boss to configure"
+            : "Choose a boss for details";
+
       rows.push(
         row(
           new StringSelectMenuBuilder()
@@ -400,17 +407,28 @@ export class Views {
                     : "viewBossDetail",
               ),
             )
-            .setPlaceholder("Choose a boss for details")
+            .setPlaceholder(placeholder)
             .addOptions(
-              visible.map((b) => ({
-                label: b.name.slice(0, 100),
-                value: String(b.id),
-                description:
-                  `${b.description || (b.enabled ? "Active" : "Disabled")}`.slice(
-                    0,
-                    100,
-                  ),
-              })),
+              visible.map((b) => {
+                const starMatch = /([⭐]+)/.exec(b.description ?? "");
+                const star = starMatch
+                  ? starMatch[1]
+                  : b.description?.includes("2-Star")
+                    ? "⭐⭐"
+                    : b.schedule_type === "interval"
+                      ? "⏳"
+                      : "⭐";
+                const roleStatus = b.role_id ? "🔔 Role set" : "⚠️ No role";
+                const desc =
+                  mode === "choose"
+                    ? `${roleStatus} • ${b.schedule_type}`
+                    : `${b.description || (b.enabled ? "Active" : "Disabled")}`;
+                return {
+                  label: `${star} ${b.name}`.slice(0, 100),
+                  value: String(b.id),
+                  description: desc.slice(0, 100),
+                };
+              }),
             ),
         ),
       );
@@ -478,9 +496,17 @@ export class Views {
       const descStr = b.description
         ? ` • *${escapeMarkdown(b.description).slice(0, 100)}*`
         : "";
+      const roleStr = b.role_id ? `<@&${b.role_id}>` : "*Not configured*";
+      const valueLines = [
+        `> ⏰ **Times:** ${timesStr} PHT`,
+        `> 📋 **Type:** ${scheduleInfo}${descStr}`,
+      ];
+      if (mode === "choose") {
+        valueLines.push(`> 🔔 **Alert Role:** ${roleStr}`);
+      }
       result.embeds[0]!.addFields({
         name: `${b.enabled ? "🟢" : "⏸️"} ${escapeMarkdown(b.name)}`,
-        value: `> ⏰ **Times:** ${timesStr} PHT\n> 📋 **Type:** ${scheduleInfo}${descStr}`,
+        value: valueLines.join("\n"),
         inline: false,
       });
     }
@@ -558,10 +584,15 @@ export class Views {
         }
       }
 
+      const roleNotice = b.role_id
+        ? `> 🔔 **Alert Role:** <@&${b.role_id}>`
+        : `> ⚠️ **Alert Role:** *No specific role configured by admin*`;
+
       const desc = [
         `> 🏷️ **Tier:** ${tierBadge}`,
         `> 📅 **Schedule:** ${scheduleBadge}`,
-        `> ⚡ **Status:** ${b.enabled ? "Active" : "Disabled"}\n`,
+        `> ⚡ **Status:** ${b.enabled ? "Active" : "Disabled"}`,
+        roleNotice + "\n",
         b.schedule_type === "interval"
           ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\n*Timer starts after a defeat report; base daily times are ignored.*\n`
           : `⏰ **Spawn Schedule (PHT)**\n${b.times.map((t) => `• \`${formatTime(t)} PHT\``).join("\n")}\n`,
@@ -1026,23 +1057,49 @@ export class Views {
 
     let subsText: string;
     if (all) {
-      subsText =
-        "⭐ 1-Star Bosses — Subscribed\n⭐⭐ 2-Star Bosses — Subscribed\n*(All Gehenna Bosses)*";
+      subsText = [
+        "> 🟢 **All Bosses Alert Active**",
+        "> ⭐ 1-Star Bosses — Subscribed",
+        "> ⭐⭐ 2-Star Bosses — Subscribed",
+        "*(You will receive alerts for every boss spawn on this server)*",
+      ].join("\n");
     } else if (bosses.length > 0) {
-      subsText =
-        bosses
-          .slice(0, 15)
-          .map((b) => `• ${escapeMarkdown(b.name)} — Subscribed`)
-          .join("\n") + (bosses.length > 15 ? "\n…more subscriptions" : "");
+      const { oneStar, twoStar, other } = groupBossesByTierAndLevel(bosses);
+      const subLines: string[] = [];
+      if (oneStar.count > 0) {
+        subLines.push(`⭐ **1-Star Bosses (${oneStar.count})**`);
+        for (const grp of oneStar.groups) {
+          subLines.push(
+            `> • **${grp.group}** ${grp.names.map((x) => escapeMarkdown(x)).join(" · ")}`,
+          );
+        }
+      }
+      if (twoStar.count > 0) {
+        subLines.push(`⭐⭐ **2-Star Bosses (${twoStar.count})**`);
+        for (const grp of twoStar.groups) {
+          subLines.push(
+            `> • **${grp.group}** ${grp.names.map((x) => escapeMarkdown(x)).join(" · ")}`,
+          );
+        }
+      }
+      if (other.count > 0) {
+        subLines.push(`**Other Bosses (${other.count})**`);
+        for (const grp of other.groups) {
+          subLines.push(
+            `> • **${grp.group}** ${grp.names.map((x) => escapeMarkdown(x)).join(" · ")}`,
+          );
+        }
+      }
+      subsText = subLines.join("\n");
     } else {
-      subsText = "None configured";
+      subsText = "> 🔴 *No boss alerts currently configured.*";
     }
 
     const desc = [
-      `**Status:** ${isEnabled ? "🟢 Enabled" : "🔴 Disabled"}\n`,
+      `> ⚡ **Alert Status:** ${isEnabled ? "🟢 Enabled" : "🔴 Disabled"}`,
+      `> 📢 **Server All-Boss Role:** ${s.global_alert_role_id ? `<@&${s.global_alert_role_id}>` : "*Not configured*"}\n`,
       `**Subscriptions**\n${subsText}\n`,
-      `**Notification Role**\n${s.global_alert_role_id ? `<@&${s.global_alert_role_id}>` : "Not configured"}\n`,
-      `Enable Alerts subscribes to **all** bosses. Selecting an individual boss removes the all-boss role. Disable Alerts removes all opt-in roles.`,
+      `*💡 Enable Alerts subscribes to all bosses. Selecting individual bosses lets you customize specific alerts. Disable Alerts removes all opt-in roles.*`,
     ].join("\n");
 
     const toggleButton = isEnabled
