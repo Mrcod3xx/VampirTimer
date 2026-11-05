@@ -58,7 +58,12 @@ export class Views {
             const pht = `${DateTime.fromMillis(next.at, { zone: ZONE }).toFormat("h:mm a")} PHT`;
             nextSpawnText = `${pht} (<t:${sec}:R>)`;
         }
-        return this.view("👹 GEHENNA BOSS TRACKER", `**Bosses Tracked:** ${bosses.length}\n**Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "Not configured"}\n**Notifications:** ${s.notifications_enabled ? "🟢 Enabled" : "🔴 Disabled"}\n**Next Spawn:** ${nextSpawnText}`, [
+        return this.view("👹 GEHENNA BOSS TRACKER", [
+            `> 👹 **Bosses Tracked:** **${bosses.length}**`,
+            `> 📢 **Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "*Not configured*"}`,
+            `> 🔔 **Notifications:** ${s.notifications_enabled ? "🟢 Enabled" : "🔴 Disabled"}`,
+            `> ⏱️ **Next Spawn:** ${nextSpawnText}`,
+        ].join("\n"), [
             row(this.button(g, u, "schedule", "View Bosses", "0"), this.button(g, u, "next", "Next Boss"), this.button(g, u, "alerts", "My Alerts"), this.button(g, u, "admin", "Admin Settings")),
         ], 0x8b5cf6);
     }
@@ -135,7 +140,8 @@ export class Views {
             bossSections.push("");
         }
         const rawDesc = [
-            `**Starts:** <t:${sec}:R>\n`,
+            `> 🌐 **Your Local Time:** <t:${sec}:t>`,
+            `> ⏱️ **Starts:** <t:${sec}:R>\n`,
             `**Scheduled Bosses (${next.bosses.length})**`,
             bossSections.join("\n").trim(),
         ].join("\n");
@@ -226,10 +232,16 @@ export class Views {
                 const hours = Math.round((b.respawn_interval_minutes ?? 60) / 60);
                 scheduleInfo = `Interval Respawn (${hours}h)`;
             }
+            const timesStr = b.times.length > 0
+                ? b.times.map(formatTime).join(" · ")
+                : "No fixed times";
+            const descStr = b.description
+                ? ` • *${escapeMarkdown(b.description).slice(0, 100)}*`
+                : "";
             result.embeds[0].addFields({
-                name: `${b.enabled ? "🟢" : "⏸️"} ${b.name}`,
-                value: `${b.times.map(formatTime).join(" · ")}\n${scheduleInfo}${b.description ? ` • ${escapeMarkdown(b.description).slice(0, 150)}` : ""}`,
-                inline: true,
+                name: `${b.enabled ? "🟢" : "⏸️"} ${escapeMarkdown(b.name)}`,
+                value: `> ⏰ **Times:** ${timesStr} PHT\n> 📋 **Type:** ${scheduleInfo}${descStr}`,
+                inline: false,
             });
         }
         return result;
@@ -302,12 +314,12 @@ export class Views {
                 }
             }
             const desc = [
-                `**Tier:** ${tierBadge}`,
-                `**Schedule Type:** ${scheduleBadge}`,
-                `**Status:** ${b.enabled ? "Active" : "Disabled"}\n`,
+                `> 🏷️ **Tier:** ${tierBadge}`,
+                `> 📅 **Schedule:** ${scheduleBadge}`,
+                `> ⚡ **Status:** ${b.enabled ? "Active" : "Disabled"}\n`,
                 b.schedule_type === "interval"
-                    ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\nTimer starts after a defeat report; base daily times are ignored.\n`
-                    : `⏰ **Spawn Schedule**\n${b.times.map((t) => `• ${formatTime(t)} PHT`).join("\n")}\n`,
+                    ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\n*Timer starts after a defeat report; base daily times are ignored.*\n`
+                    : `⏰ **Spawn Schedule (PHT)**\n${b.times.map((t) => `• \`${formatTime(t)} PHT\``).join("\n")}\n`,
                 `⏱️ **Next Spawn**`,
                 ...nextSpawnInfo,
             ].join("\n");
@@ -318,11 +330,13 @@ export class Views {
             ], 0x8b5cf6);
         }
         const desc = [
-            `${b.enabled ? "🟢 Active" : "⏸️ Disabled"}  ${tierBadge} • ${scheduleBadge}\n`,
+            `> ⚡ **Status:** ${b.enabled ? "🟢 Active" : "⏸️ Disabled"}`,
+            `> 🏷️ **Tier:** ${tierBadge}`,
+            `> 📅 **Schedule:** ${scheduleBadge}\n`,
             b.schedule_type === "interval"
-                ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\nTimer starts after a defeat report; daily base times are ignored.\n`
-                : `⏰ **Spawn Schedule**\n${b.times.map(formatTime).join(" • ")}\n`,
-            `🔔 **Alert Role**\n${b.role_id ? `<@&${b.role_id}>` : "Not configured"}`,
+                ? `⏳ **Respawn Interval:** ${Math.round((b.respawn_interval_minutes ?? 60) / 60)} hours after defeat\n*Timer starts after a defeat report; daily base times are ignored.*\n`
+                : `⏰ **Spawn Schedule (PHT)**\n${b.times.map((t) => `• \`${formatTime(t)} PHT\``).join("\n")}\n`,
+            `🔔 **Alert Role:** ${b.role_id ? `<@&${b.role_id}>` : "*Not configured*"}`,
         ].join("\n");
         return this.view(`${starEmoji} ${escapeMarkdown(b.name)}`, desc, [
             row(this.button(g, u, "edit", "✏️ Edit", String(id)), this.button(g, u, "toggleBoss", b.enabled ? "⏸️ Disable" : "▶️ Enable", String(id)), this.button(g, u, "bossRole", "🔔 Set Role", String(id)), this.button(g, u, "remove", "🗑️ Remove", String(id), ButtonStyle.Danger), this.button(g, u, "manage", "← Back", "0")),
@@ -407,18 +421,19 @@ export class Views {
             .prepare("SELECT COUNT(*) AS n FROM notification_logs WHERE guild_id=? AND status='uncertain'")
             .get(g).n;
         const desc = [
-            `**Bot Status:** 🟢 Online`,
-            `**Scheduler:** ${schedulerStatus}`,
-            `**Database:** 🟢 Connected (SQLite WAL)`,
-            `**Timezone:** Philippine Time (UTC+8)\n`,
-            `**Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "🔴 Not configured"}`,
-            `**Last Delivery:** ${lastDeliveryText}`,
-            `**Next Scheduled Alert:** ${nextAlertText}\n`,
+            `> 🤖 **Bot Status:** 🟢 Online`,
+            `> ⏱️ **Scheduler:** ${schedulerStatus}`,
+            `> 💾 **Database:** 🟢 Connected (SQLite WAL)`,
+            `> 🌏 **Timezone:** Philippine Time (UTC+8)\n`,
+            `**Channel & Delivery**`,
+            `> 📢 **Notification Channel:** ${s.notification_channel_id ? `<#${s.notification_channel_id}>` : "🔴 Not configured"}`,
+            `> 📬 **Last Delivery:** ${lastDeliveryText}`,
+            `> ⏳ **Next Scheduled Alert:** ${nextAlertText}\n`,
             `**Reliability Metrics (Retained History)**`,
             `• Failed Deliveries: **${failedCount}**`,
             `• Missed Reminders: **${missedCount}**`,
             `• Uncertain deliveries: **${uncertain}** (not resent automatically)`,
-            `**Memory:** ${Math.round(process.memoryUsage().rss / 1048576)} MB RSS`,
+            `• Memory: **${Math.round(process.memoryUsage().rss / 1048576)} MB RSS**`,
         ].join("\n");
         return this.view("📊 BOT SYSTEM STATUS", desc, [
             row(this.button(g, u, "status", "🔄 Refresh"), this.button(g, u, "deliveryLogs", "📋 Delivery Logs", "0"), this.button(g, u, "audit", "📜 Audit Logs", "all:0")),

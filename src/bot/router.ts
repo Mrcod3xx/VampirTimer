@@ -644,16 +644,17 @@ export class Router {
 
           const nowSec = Math.floor(nowMs / 1000);
           const lines: string[] = [
-            `**Boss:** ${escapeMarkdown(b.name)}`,
-            `**Reported By:** <@${u}>`,
-            `**Defeated At:** <t:${nowSec}:t> (<t:${nowSec}:R>)\n`,
+            `> 👹 **Boss:** **${escapeMarkdown(b.name)}**`,
+            `> 👤 **Reported By:** <@${u}>`,
+            `> ⏱️ **Defeated At:** <t:${nowSec}:t> (<t:${nowSec}:R>)\n`,
           ];
 
           if (b.schedule_type === "interval" && b.respawn_interval_minutes) {
             const respawnMs = nowMs + b.respawn_interval_minutes * 60 * 1000;
             const respawnSec = Math.floor(respawnMs / 1000);
             lines.push(
-              `⏱️ **Estimated Respawn:** <t:${respawnSec}:t> (<t:${respawnSec}:R>)`,
+              `⏱️ **Estimated Respawn**`,
+              `> <t:${respawnSec}:t> (<t:${respawnSec}:R>)`,
               `*Based on ${Math.round(b.respawn_interval_minutes / 60)}h respawn duration.*`,
             );
           } else {

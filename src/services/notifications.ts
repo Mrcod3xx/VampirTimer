@@ -85,7 +85,7 @@ export function scheduleText(
     "*Daily Spawns • Philippine Time (UTC+8)*\n",
     "⏰ **Spawn Schedule**\n",
     timeRows.join("\n\n"),
-    "\n───────────────────────────────────────────\n",
+    "\n────────────────────\n",
   ];
 
   if (oneStar.count > 0) {
@@ -124,7 +124,7 @@ export function scheduleText(
     sections.push("");
   }
 
-  sections.push("───────────────────────────────────────────");
+  sections.push("────────────────────");
   sections.push(
     `**${bosses.length} Bosses • ${times.length} Daily Spawn Times**`,
   );
@@ -280,19 +280,19 @@ export class Notifications implements Delivery {
       if (first.minutes === 30) {
         title = "⏰ BOSS SPAWN IN 30 MINUTES";
         color = 0xeab308;
-        description = `**Scheduled Spawn:** ${phtFormatted}\n**Your Local Time:** <t:${spawnSec}:t>\n**Starts:** <t:${spawnSec}:R>\n\n${bossListText}\n\n⚔️ **Prepare your party!**`;
+        description = `> 📍 **Scheduled (PHT):** \`${phtFormatted}\`\n> 🌐 **Your Local Time:** <t:${spawnSec}:t>\n> ⏱️ **Starts:** <t:${spawnSec}:R>\n\n${bossListText}\n\n⚔️ **Prepare your party!**`;
       } else if (first.minutes === 10) {
         title = "⚠️ BOSS SPAWN IN 10 MINUTES!";
         color = 0xf59e0b;
-        description = `**Scheduled Spawn:** ${phtFormatted}\n**Your Local Time:** <t:${spawnSec}:t>\n**Starts:** <t:${spawnSec}:R>\n\n${bossListText}\n\n⚔️ **Get ready!**`;
+        description = `> 📍 **Scheduled (PHT):** \`${phtFormatted}\`\n> 🌐 **Your Local Time:** <t:${spawnSec}:t>\n> ⏱️ **Starts:** <t:${spawnSec}:R>\n\n${bossListText}\n\n⚔️ **Get ready!**`;
       } else if (first.minutes === 0) {
         title = "🔥 GEHENNA BOSSES HAVE SPAWNED!";
         color = 0xf97316;
-        description = `**Scheduled Spawn:** ${phtFormatted}\n**Your Local Time:** <t:${spawnSec}:t>\n\n${bossListText}\n\n⚔️ **Good luck, everyone!**`;
+        description = `> 📍 **Spawned At (PHT):** \`${phtFormatted}\`\n> 🌐 **Your Local Time:** <t:${spawnSec}:t>\n\n${bossListText}\n\n⚔️ **Good luck, everyone!**`;
       } else {
         title = `⏰ BOSS SPAWN IN ${first.minutes} MINUTES!`;
         color = 0xf59e0b;
-        description = `**Scheduled Spawn:** ${phtFormatted}\n**Your Local Time:** <t:${spawnSec}:t>\n**Starts:** <t:${spawnSec}:R>\n\n${bossListText}\n\n⚔️ **Prepare your party!**`;
+        description = `> 📍 **Scheduled (PHT):** \`${phtFormatted}\`\n> 🌐 **Your Local Time:** <t:${spawnSec}:t>\n> ⏱️ **Starts:** <t:${spawnSec}:R>\n\n${bossListText}\n\n⚔️ **Prepare your party!**`;
       }
     }
 
@@ -309,7 +309,7 @@ export class Notifications implements Delivery {
           ? "⏳ ESTIMATED RESPAWN TIME"
           : `⏳ ESTIMATED RESPAWN IN ${first.minutes} MINUTES`;
       description +=
-        "\n\nRespawn estimates use player defeat reports; appearance is not confirmed in-game.";
+        "\n\n*Note: Respawn estimates use player defeat reports; appearance is not confirmed in-game.*";
     }
     const embed = new EmbedBuilder()
       .setColor(color)
